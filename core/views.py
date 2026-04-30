@@ -11,7 +11,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 import openpyxl
-from .models import Serial, Part, RotorBalancing
+from .models import Serial, Part, RotorBalancing, StatorBalancingRecord
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -101,6 +101,12 @@ def production_log_view(request):
 def rotor_balancing_view(request):
     user = _user_ctx(request.user)
     return render(request, 'rotor_balancing.html', {'user': user, 'active_page': 'rotor_balancing'})
+
+
+@login_required
+def stator_balancing_view(request):
+    user = _user_ctx(request.user)
+    return render(request, 'stator_balancing.html', {'user': user, 'active_page': 'stator_balancing'})
 
 
 def _user_ctx(user):
@@ -638,3 +644,93 @@ def api_rotor_balancing_delete(request, pk):
     except RotorBalancing.DoesNotExist:
         return Response({'success': False, 'error': 'Record not found'}, status=404)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STATOR BALANCING API
+# ══════════════════════════════════════════════════════════════════════════════
+
+import pandas as pd
+
+@api_view(['POST'])
+def api_stator_balancing_import(request):
+    file_obj = request.FILES.get('file')
+    if not file_obj:
+        return Response({'detail': 'No file uploaded'}, status=400)
+
+    try:
+        df = pd.read_csv(file_obj, sep='\t')
+        
+        req_cols = ['BAR CODE', 'DATE', 'FINAL RESULT', 'R/Y', 'R/Y RESULT', 'SURGE VOLTAGE']
+        missing = [c for c in req_cols if c not in df.columns]
+        if missing:
+            return Response({'detail': f'Missing expected columns: {", ".join(missing)}'}, status=400)
+
+        imported = 0
+        skipped = 0
+
+        for index, row in df.iterrows():
+            sn_val = str(row['BAR CODE']).strip()
+            if not sn_val or sn_val == 'nan': 
+                continue
+                
+            if StatorBalancingRecord.objects.filter(serial_number=sn_val).exists():
+                skipped += 1
+                continue
+
+            date_val = row['DATE']
+            recorded_at = None
+            if pd.notna(date_val):
+                try:
+                    dt = pd.to_datetime(date_val)
+                    if dt.tzinfo is None:
+                        dt = dt.tz_localize('UTC').astimezone(IST)
+                    recorded_at = dt.to_pydatetime()
+                except Exception:
+                    pass
+
+            ry_val = str(row['R/Y']).strip() if pd.notna(row['R/Y']) else ''
+            ry_result_val = str(row['R/Y RESULT']).strip() if pd.notna(row['R/Y RESULT']) else ''
+            surge_val = str(row['SURGE VOLTAGE']).strip() if pd.notna(row['SURGE VOLTAGE']) else ''
+            final_res = str(row['FINAL RESULT']).strip()
+
+            StatorBalancingRecord.objects.create(
+                serial_number=sn_val,
+                recorded_at=recorded_at,
+                final_result=final_res,
+                ry=ry_val,
+                ry_result=ry_result_val,
+                surge_voltage=surge_val
+            )
+            imported += 1
+
+        return Response({'detail': f'{imported} records imported, {skipped} skipped (already existed).'})
+
+    except Exception as e:
+        return Response({'detail': f'Error parsing TSV file: {str(e)}'}, status=500)
+
+
+@api_view(['GET'])
+def api_stator_balancing_list(request):
+    records = StatorBalancingRecord.objects.all().order_by('-imported_at')[:200]
+    data = []
+    for r in records:
+        data.append({
+            'id': r.id,
+            'serial_number': r.serial_number,
+            'recorded_at': r.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.recorded_at else '',
+            'final_result': r.final_result,
+            'ry': r.ry or '',
+            'ry_result': r.ry_result or '',
+            'surge_voltage': r.surge_voltage or '',
+            'imported_at': r.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.imported_at else ''
+        })
+    return Response(data)
+
+@api_view(['DELETE'])
+def api_stator_balancing_delete(request, pk):
+    try:
+        record = StatorBalancingRecord.objects.get(pk=pk)
+        record.delete()
+        return Response({'success': True})
+    except StatorBalancingRecord.DoesNotExist:
+        return Response({'success': False, 'error': 'Record not found'}, status=404)

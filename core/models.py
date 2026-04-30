@@ -57,3 +57,19 @@ class RotorBalancing(models.Model):
 
     def __str__(self):
         return f"{self.serial_number} - {self.result}"
+
+class StatorBalancingRecord(models.Model):
+    serial_number = models.CharField(max_length=50, unique=True, db_index=True)
+    recorded_at = models.DateTimeField(null=True, blank=True)
+    final_result = models.CharField(max_length=20)
+    ry = models.CharField(max_length=50, null=True, blank=True)
+    ry_result = models.CharField(max_length=20, null=True, blank=True)
+    surge_voltage = models.CharField(max_length=50, null=True, blank=True)
+    imported_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'stator_balancing'
+        ordering = ['-imported_at']
+
+    def __str__(self):
+        return f"{self.serial_number} - {self.final_result}"
