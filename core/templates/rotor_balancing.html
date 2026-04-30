@@ -147,30 +147,28 @@ function renderTable(data) {
     const bColor = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
     const dotColor = isPass ? 'bg-green-500' : 'bg-red-500';
     
-    return `
-      <tr class="hover:bg-slate-50 transition-colors whitespace-nowrap">
-        <td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">${r.serial_number}</span></td>
-        <td class="px-5 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold text-slate-600">${r.rotor_type || '-'}</span></td>
-        <td class="px-5 py-3">
-          <span class="inline-flex items-center gap-1.5 text-xs font-bold ${bColor} px-2 py-0.5 rounded-full">
-            <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${r.result}
-          </span>
-        </td>
-        <td class="px-5 py-3 text-center text-xs font-medium text-slate-700">${r.measure_run || '-'}</td>
-        <td class="px-5 py-3 text-center text-xs font-medium text-slate-700">${r.balancing_run || '-'}</td>
-        <td class="px-5 py-3 text-center text-xs font-medium text-slate-700">${r.rpm || '-'}</td>
-        <td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">${r.plane1_weight !== '' ? r.plane1_weight : '-'}</td>
-        <td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">${r.plane1_degree !== '' ? r.plane1_degree : '-'}</td>
-        <td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">${r.plane2_weight !== '' ? r.plane2_weight : '-'}</td>
-        <td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">${r.plane2_degree !== '' ? r.plane2_degree : '-'}</td>
-        <td class="px-5 py-3 text-right text-xs text-slate-400">${r.recorded_at || r.imported_at}</td>
-        <td class="px-5 py-3 text-center">
-            <button onclick="deleteRecord(${r.id})" class="text-slate-300 hover:text-red-500 transition-colors p-1" title="Delete">
-                <span class="material-symbols-outlined text-[16px]">delete</span>
-            </button>
-        </td>
-      </tr>
-    `;
+    return '<tr class="hover:bg-slate-50 transition-colors whitespace-nowrap">' +
+      '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + r.serial_number + '</span></td>' +
+      '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold text-slate-600">' + (r.rotor_type || '-') + '</span></td>' +
+      '<td class="px-5 py-3">' +
+        '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + bColor + ' px-2 py-0.5 rounded-full">' +
+          '<span class="h-1.5 w-1.5 rounded-full ' + dotColor + '"></span>' + r.result +
+        '</span>' +
+      '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-medium text-slate-700">' + (r.measure_run || '-') + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-medium text-slate-700">' + (r.balancing_run || '-') + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-medium text-slate-700">' + (r.rpm || '-') + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane1_weight !== '' ? r.plane1_weight : '-') + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane1_degree !== '' ? r.plane1_degree : '-') + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane2_weight !== '' ? r.plane2_weight : '-') + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane2_degree !== '' ? r.plane2_degree : '-') + '</td>' +
+      '<td class="px-5 py-3 text-right text-xs text-slate-400">' + (r.recorded_at || r.imported_at) + '</td>' +
+      '<td class="px-5 py-3 text-center">' +
+          '<button onclick="deleteRecord(' + r.id + ')" class="text-slate-300 hover:text-red-500 transition-colors p-1" title="Delete">' +
+              '<span class="material-symbols-outlined text-[16px]">delete</span>' +
+          '</button>' +
+      '</td>' +
+    '</tr>';
   }).join('');
   
   tbody.innerHTML = html;

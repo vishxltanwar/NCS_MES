@@ -4,13 +4,14 @@ from datetime import date, datetime, timedelta, timezone
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
-from django.db.models.functions import TruncDate
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 import openpyxl
+import pandas as pd
+import datetime as dt
+from django.utils import timezone as django_tz
 from .models import Serial, Part, RotorBalancing, StatorBalancingRecord
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -609,9 +610,6 @@ def api_rotor_balancing_import(request):
         imported = 0
         skipped = 0
         
-        from django.utils import timezone
-        import datetime
-
         for row in sheet.iter_rows(min_row=2, values_only=True):
             if not row: continue
             sn_val = row[col_indices['Rotor-Ident']]
@@ -626,9 +624,9 @@ def api_rotor_balancing_import(request):
             time_val = row[col_indices['hh:mm:ss']]
             recorded_at = None
             try:
-                if isinstance(date_val, datetime.datetime):
-                    if isinstance(time_val, datetime.time):
-                        recorded_at = datetime.datetime.combine(date_val.date(), time_val)
+                if isinstance(date_val, dt.datetime):
+                    if isinstance(time_val, dt.time):
+                        recorded_at = dt.datetime.combine(date_val.date(), time_val)
                     else:
                         recorded_at = date_val
                 elif isinstance(date_val, str) and isinstance(time_val, str):
@@ -637,12 +635,12 @@ def api_rotor_balancing_import(request):
                         dt_str = f"{date_str} {time_str}"
                         for fmt in ("%d-%m-%y %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
                             try:
-                                recorded_at = datetime.datetime.strptime(dt_str, fmt)
+                                recorded_at = dt.datetime.strptime(dt_str, fmt)
                                 break
                             except ValueError:
                                 pass
-                if recorded_at and timezone.is_naive(recorded_at):
-                    recorded_at = timezone.make_aware(recorded_at)
+                if recorded_at and django_tz.is_naive(recorded_at):
+                    recorded_at = django_tz.make_aware(recorded_at)
             except Exception:
                 pass
 
@@ -717,8 +715,6 @@ def api_rotor_balancing_delete(request, pk):
 # ══════════════════════════════════════════════════════════════════════════════
 # STATOR BALANCING API
 # ══════════════════════════════════════════════════════════════════════════════
-
-import pandas as pd
 
 @api_view(['POST'])
 def api_stator_balancing_import(request):

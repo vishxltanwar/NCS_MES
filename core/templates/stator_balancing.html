@@ -158,21 +158,19 @@ function renderTable(data) {
       </span>
     `;
     
-    return `
-      <tr class="hover:bg-slate-50 transition-colors">
-        <td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">${r.serial_number}</span></td>
-        <td class="px-5 py-3 text-xs text-slate-500 whitespace-nowrap">${r.recorded_at}</td>
-        <td class="px-5 py-3 text-center">${finalResultHtml}</td>
-        <td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">${r.ry || '-'}</td>
-        <td class="px-5 py-3 text-center">${ryResultHtml}</td>
-        <td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">${r.surge_voltage || '-'}</td>
-        <td class="px-5 py-3 text-center">
-            <button onclick="deleteRecord(${r.id})" class="text-slate-300 hover:text-red-500 transition-colors p-1" title="Delete">
-                <span class="material-symbols-outlined text-[16px]">delete</span>
-            </button>
-        </td>
-      </tr>
-    `;
+    return '<tr class="hover:bg-slate-50 transition-colors">' +
+      '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + r.serial_number + '</span></td>' +
+      '<td class="px-5 py-3 text-xs text-slate-500 whitespace-nowrap">' + r.recorded_at + '</td>' +
+      '<td class="px-5 py-3 text-center">' + finalResultHtml + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.ry || '-') + '</td>' +
+      '<td class="px-5 py-3 text-center">' + ryResultHtml + '</td>' +
+      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.surge_voltage || '-') + '</td>' +
+      '<td class="px-5 py-3 text-center">' +
+          '<button onclick="deleteRecord(' + r.id + ')" class="text-slate-300 hover:text-red-500 transition-colors p-1" title="Delete">' +
+              '<span class="material-symbols-outlined text-[16px]">delete</span>' +
+          '</button>' +
+      '</td>' +
+    '</tr>';
   }).join('');
   
   tbody.innerHTML = html;

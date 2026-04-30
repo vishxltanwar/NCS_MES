@@ -59,7 +59,7 @@ class RotorBalancing(models.Model):
         return f"{self.serial_number} - {self.result}"
 
 class StatorBalancingRecord(models.Model):
-    serial_number = models.CharField(max_length=50, unique=True, db_index=True)
+    serial_number = models.CharField(max_length=32, unique=True, db_index=True)
     recorded_at = models.DateTimeField(null=True, blank=True)
     final_result = models.CharField(max_length=20)
     ry = models.CharField(max_length=50, null=True, blank=True)
