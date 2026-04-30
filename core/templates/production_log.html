@@ -1,0 +1,446 @@
+{% extends "base.html" %}
+{% block title %}Production Log | Napino Control Systems{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-[1280px] mx-auto px-8 py-6 space-y-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+                <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
+                <span class="material-symbols-outlined text-sm">chevron_right</span>
+                <span class="text-primary">Production Log</span>
+            </nav>
+            <h2 class="text-2xl font-bold text-slate-900 tracking-tight">Production Log</h2>
+            <p class="text-sm text-slate-500 mt-1">Last 7 days of production analytics</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2">
+                <select id="part-type-filter" onchange="selectedPartType = this.value; loadData();"
+                    class="h-[34px] px-3 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all cursor-pointer">
+                    <option value="">All Types</option>
+                    <option value="Rotor">Rotor</option>
+                    <option value="Stator">Stator</option>
+                    <option value="Motor">Motor</option>
+                </select>
+            </div>
+            <div class="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border border-primary/15 rounded-lg">
+                <span class="material-symbols-outlined text-primary text-base">date_range</span>
+                <span id="date-range" class="text-xs font-bold text-primary font-mono">&mdash;</span>
+            </div>
+            <button onclick="loadData()"
+                class="flex items-center gap-2 rounded-lg bg-white border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all shadow-sm">
+                <span class="material-symbols-outlined text-base">refresh</span> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 xl:grid-cols-5 gap-5">
+        <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:100ms] relative overflow-hidden rounded-xl border border-white/80 bg-white/70 backdrop-blur-md p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300">
+            <div class="flex justify-between items-start mb-3">
+                <div class="rounded-lg bg-blue-50 p-2 text-blue-600"><span class="material-symbols-outlined">inventory_2</span></div>
+                <span class="text-[10px] font-bold text-slate-400 uppercase">7 Days</span>
+            </div>
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-400">Total Parts</p>
+            <h3 class="text-3xl font-bold text-slate-900 mt-1 font-mono" id="kpi-total">&mdash;</h3>
+        </div>
+        <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:200ms] relative overflow-hidden rounded-xl border border-white/80 bg-white/70 backdrop-blur-md p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300">
+            <div class="flex justify-between items-start mb-3">
+                <div class="rounded-lg bg-indigo-50 p-2 text-indigo-600"><span class="material-symbols-outlined">avg_pace</span></div>
+                <span class="text-[10px] font-bold text-indigo-600 uppercase">Avg</span>
+            </div>
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-400">Daily Average</p>
+            <h3 class="text-3xl font-bold text-indigo-600 mt-1 font-mono" id="kpi-avg">&mdash;</h3>
+        </div>
+        <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:300ms] relative overflow-hidden rounded-xl border border-white/80 bg-white/70 backdrop-blur-md p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300">
+            <div class="flex justify-between items-start mb-3">
+                <div class="rounded-lg bg-amber-50 p-2 text-amber-600"><span class="material-symbols-outlined">trending_up</span></div>
+                <span class="text-[10px] font-bold text-amber-600 uppercase">Peak</span>
+            </div>
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-400">Peak Day</p>
+            <h3 class="text-2xl font-bold text-slate-900 mt-1" id="kpi-peak">&mdash;</h3>
+            <p class="text-xs text-slate-400 font-medium mt-0.5" id="kpi-peak-count"></p>
+        </div>
+        <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:400ms] relative overflow-hidden rounded-xl border border-white/80 bg-white/70 backdrop-blur-md p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300">
+            <div class="flex justify-between items-start mb-3">
+                <div class="rounded-lg bg-green-50 p-2 text-green-600"><span class="material-symbols-outlined">check_circle</span></div>
+                <span class="text-[10px] font-bold text-green-600 uppercase">Rate</span>
+            </div>
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-400">Mark Rate</p>
+            <h3 class="text-3xl font-bold text-green-600 mt-1 font-mono" id="kpi-rate">&mdash;</h3>
+        </div>
+        <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:500ms] relative overflow-hidden rounded-xl border border-white/80 bg-white/70 backdrop-blur-md p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300">
+            <div class="flex justify-between items-start mb-3">
+                <div class="rounded-lg bg-cyan-50 p-2 text-cyan-600"><span class="material-symbols-outlined">speed</span></div>
+                <span class="inline-flex items-center gap-1.5 text-[10px] font-bold text-cyan-600 uppercase">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                    </span>Live</span>
+            </div>
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-400">Live Rate</p>
+            <h3 class="text-3xl font-bold text-cyan-600 mt-1 font-mono" id="kpi-live-rate">&mdash;</h3>
+            <p class="text-[10px] text-slate-400 font-medium mt-0.5">parts/hr (last 60 min)</p>
+        </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        <div class="xl:col-span-2 opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:550ms] rounded-xl border border-white/80 bg-white/80 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/60 flex items-center justify-between">
+                <div>
+                    <h3 class="font-bold text-slate-900 text-sm uppercase tracking-tight">7-Day Production Overview</h3>
+                    <p class="text-[10px] text-slate-400 mt-0.5">Volume by day</p>
+                </div>
+            </div>
+            <div class="p-6">
+                <canvas id="daily-chart" height="220"></canvas>
+            </div>
+        </div>
+        <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:650ms] rounded-xl border border-white/80 bg-white/80 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/60">
+                <h3 class="font-bold text-slate-900 text-sm uppercase tracking-tight">Shift Breakdown</h3>
+                <p class="text-[10px] text-slate-400 mt-0.5">Distribution by shift</p>
+            </div>
+            <div class="p-6" id="shift-bars"></div>
+        </div>
+    </div>
+
+    <!-- Bottom Row -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        <div class="xl:col-span-2 opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:750ms] rounded-xl border border-white/80 bg-white/80 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/60">
+                <h3 class="font-bold text-slate-900 text-sm uppercase tracking-tight">Daily Breakdown</h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <thead>
+                        <tr class="bg-slate-50/50 border-b border-white/60">
+                            <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Date</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">Shift A</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">Shift B</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">Shift C</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">Shift G</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">Total</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-green-600 text-center">Marked</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-amber-600 text-center">Pending</th>
+                        </tr>
+                    </thead>
+                    <tbody id="daily-tbody" class="divide-y divide-slate-50">
+                        <tr>
+                            <td colspan="8" class="px-6 py-8 text-center text-slate-400 text-xs">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:850ms] rounded-xl border border-white/80 bg-white/80 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+            <div class="bg-slate-50 border border-slate-200 rounded-xl p-5 mb-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-bold text-slate-800 uppercase tracking-widest flex items-center gap-2">
+                        <span class="material-symbols-outlined text-amber-500 text-lg">star</span> Top Part Numbers
+                    </h3>
+                </div>
+                <div id="top-parts-list" class="space-y-3">
+                    <div class="text-center text-xs text-slate-400 py-4">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Day Detail Section -->
+    <div id="day-detail-section" class="hidden pb-8">
+        <div class="rounded-xl border border-white/80 bg-white/80 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
+            <div class="px-6 py-4 border-b border-white/60 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <h3 class="font-bold text-slate-900 text-sm uppercase tracking-tight">Day Records</h3>
+                    <div class="flex items-center gap-2">
+                        <input type="date" id="day-filter"
+                            class="text-xs font-mono font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all" />
+                        <button onclick="loadDayRecords()"
+                            class="flex items-center gap-1.5 rounded-lg bg-primary text-white px-3 py-1.5 text-xs font-bold hover:bg-primary/90 transition-all shadow-sm">
+                            <span class="material-symbols-outlined text-sm">search</span> View
+                        </button>
+                        <button onclick="closeDayDetail()"
+                            class="flex items-center gap-1 rounded-lg bg-slate-100 text-slate-500 px-3 py-1.5 text-xs font-bold hover:bg-slate-200 transition-all">
+                            <span class="material-symbols-outlined text-sm">close</span> Close
+                        </button>
+                    </div>
+                </div>
+                <div id="day-summary" class="flex items-center gap-4 text-xs font-bold"></div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <thead>
+                        <tr class="bg-slate-50/50 border-b border-white/60">
+                            <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">#</th>
+                            <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Serial Number</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Part No.</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Line</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Shift</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Part Type</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Status</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Rotor Bal.</th>
+                            <th class="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-right">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="day-tbody" class="divide-y divide-slate-50">
+                        <tr>
+                            <td colspan="9" class="px-6 py-8 text-center text-slate-400 text-xs">Select a date to view records.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+var dailyChart = null;
+var selectedPartType = '';
+var selectedLine = '';
+
+function formatDate(iso) {
+  var d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' });
+}
+
+function shortDay(iso) {
+  var d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit' });
+}
+
+function openDayDetail(dateStr) {
+  document.getElementById('day-filter').value = dateStr;
+  document.getElementById('day-detail-section').classList.remove('hidden');
+  loadDayRecords();
+  document.getElementById('day-detail-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closeDayDetail() {
+  document.getElementById('day-detail-section').classList.add('hidden');
+}
+
+async function loadDayRecords() {
+  var dateVal = document.getElementById('day-filter').value;
+  if (!dateVal) return;
+  document.getElementById('day-detail-section').classList.remove('hidden');
+  var tbody = document.getElementById('day-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-slate-400 text-xs">Loading...</td></tr>';
+  try {
+    var url = '/api/production-log/day?day=' + dateVal;
+    if (selectedPartType !== '') url = url + '&part_type=' + selectedPartType;
+    if (selectedLine !== '') url = url + '&line_no=' + selectedLine;
+    var res = await fetch(url);
+    if (!res.ok) return;
+    var data = await res.json();
+    var summaryEl = document.getElementById('day-summary');
+    summaryEl.innerHTML =
+      '<span class="text-slate-900 font-mono">' + formatDate(data.date) + '</span>' +
+      '<span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">' + data.total + ' total</span>' +
+      '<span class="px-2 py-0.5 bg-green-50 text-green-700 rounded-full">' + data.marked + ' marked</span>' +
+      '<span class="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full">' + data.pending + ' pending</span>';
+    if (!data.records.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="px-6 py-8 text-center text-slate-400 text-xs">No records found for this date.</td></tr>';
+      return;
+    }
+    var html = '';
+    data.records.forEach(function(s, idx) {
+      var statusClass = s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100';
+      var dotClass = s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500';
+      var ptLabel = s.part_type || 'N/A';
+      var ptClass = ptLabel === 'Rotor' ? 'bg-blue-50 text-blue-700'
+        : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
+        : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
+        : 'bg-slate-100 text-slate-400';
+      var timeStr = (s.created_at && s.created_at !== '\u2014')
+        ? new Date(s.created_at).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })
+        : '--';
+      var rotClass = s.rotor_result === 'Pass' ? 'text-green-700 bg-green-100' : (s.rotor_result === 'Fail' ? 'text-red-700 bg-red-100' : 'text-slate-400 bg-slate-50');
+      var rotDot = s.rotor_result === 'Pass' ? 'bg-green-500' : (s.rotor_result === 'Fail' ? 'bg-red-500' : 'hidden');
+      var rotHtml = s.rotor_result ? 
+        '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + rotClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + rotDot + '"></span>' + s.rotor_result + '</span>' 
+        : '<span class="text-xs text-slate-300 font-bold px-2 py-0.5 bg-slate-50 rounded">N/A</span>';
+        
+      html += '<tr class="hover:bg-white/60 transition-colors">' +
+        '<td class="px-6 py-3 text-xs text-slate-400 font-mono">' + (idx + 1) + '</td>' +
+        '<td class="px-6 py-3"><span class="font-mono font-bold text-primary text-sm">' + s.serial_number + '</span></td>' +
+        '<td class="px-4 py-3"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>' +
+        '<td class="px-4 py-3 font-medium text-slate-600">' + s.line_no + '</td>' +
+        '<td class="px-4 py-3"><span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + s.shift + '</span></td>' +
+        '<td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span></td>' +
+        '<td class="px-4 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status + '</span></td>' +
+        '<td class="px-4 py-3">' + rotHtml + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-500 text-xs font-mono font-medium">' + timeStr + '</td>' +
+        '</tr>';
+    });
+    tbody.innerHTML = html;
+  } catch(e) {
+    console.error('Day records error:', e);
+    tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-red-400 text-xs">Error loading records.</td></tr>';
+  }
+}
+
+async function loadData() {
+  try {
+    var url = '/api/production-log';
+    var params = [];
+    if (selectedPartType !== '') params.push('part_type=' + selectedPartType);
+    if (selectedLine !== '') params.push('line_no=' + selectedLine);
+    if (params.length > 0) url = url + '?' + params.join('&');
+
+    var res = await fetch(url);
+    if (!res.ok) return;
+    var data = await res.json();
+
+    if (data.daily && data.daily.length) {
+      var first = formatDate(data.daily[0].date);
+      var last = formatDate(data.daily[data.daily.length - 1].date);
+      document.getElementById('date-range').textContent = first + ' \u2192 ' + last;
+    }
+
+    document.getElementById('kpi-total').textContent = data.kpi.total_parts.toLocaleString('en-IN');
+    document.getElementById('kpi-avg').textContent = data.kpi.daily_avg.toLocaleString('en-IN');
+    document.getElementById('kpi-peak').textContent = formatDate(data.kpi.peak_day);
+    document.getElementById('kpi-peak-count').textContent = data.kpi.peak_count + ' parts';
+    document.getElementById('kpi-rate').textContent = data.kpi.mark_rate + '%';
+
+    var labels = data.daily.map(function(d) { return shortDay(d.date); });
+    var values = data.daily.map(function(d) { return d.total; });
+
+    if (dailyChart) dailyChart.destroy();
+    var ctx = document.getElementById('daily-chart').getContext('2d');
+    dailyChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Parts Produced',
+          data: values,
+          backgroundColor: 'rgba(99, 91, 255, 0.85)',
+          borderRadius: 8,
+          borderSkipped: false,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { backgroundColor: '#1e293b', padding: 12, cornerRadius: 10 }
+        },
+        scales: {
+          y: { beginAtZero: true, grid: { color: 'rgba(226,232,240,0.5)', drawBorder: false }, ticks: { font: { size: 11 }, color: '#94a3b8' } },
+          x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#64748b' } }
+        },
+        onClick: function(evt) {
+          var pts = dailyChart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+          if (pts.length) { openDayDetail(data.daily[pts[0].index].date); }
+        }
+      }
+    });
+
+    var st = data.shift_totals;
+    var maxShift = Math.max(st.A, st.B, st.C, st.G, 1);
+    var shiftColors = { A: '#635BFF', B: '#22c55e', C: '#f59e0b', G: '#6366f1' };
+    var shiftNames = { A: 'Morning', B: 'Afternoon', C: 'Night', G: 'General' };
+    var shiftHtml = '';
+    ['A', 'B', 'C', 'G'].forEach(function(s) {
+      var pct = Math.round((st[s] / maxShift) * 100);
+      shiftHtml +=
+        '<div class="mb-4">' +
+          '<div class="flex items-center justify-between mb-1.5">' +
+            '<div class="flex items-center gap-2">' +
+              '<span class="text-xs font-bold text-slate-700">Shift ' + s + '</span>' +
+              '<span class="text-[10px] text-slate-400">' + shiftNames[s] + '</span>' +
+            '</div>' +
+            '<span class="text-xs font-bold font-mono text-slate-900">' + st[s].toLocaleString('en-IN') + '</span>' +
+          '</div>' +
+          '<div class="w-full h-3 bg-slate-100 rounded-full overflow-hidden">' +
+            '<div class="h-full rounded-full transition-all duration-700" style="width:' + pct + '%;background:' + shiftColors[s] + '"></div>' +
+          '</div>' +
+        '</div>';
+    });
+    document.getElementById('shift-bars').innerHTML = shiftHtml;
+
+    var tbody = document.getElementById('daily-tbody');
+    var hasData = false;
+    for (var i = 0; i < data.daily.length; i++) { if (data.daily[i].total > 0) hasData = true; }
+    if (!hasData) {
+      tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-slate-400 text-xs">No production data in the last 7 days.</td></tr>';
+    } else {
+      var tableHtml = '';
+      data.daily.forEach(function(row) {
+        tableHtml +=
+          '<tr class="hover:bg-white/60 transition-colors cursor-pointer" onclick="openDayDetail(\'' + row.date + '\')">' +
+          '<td class="px-6 py-3 font-medium text-sm text-slate-700 whitespace-nowrap">' + formatDate(row.date) + '</td>' +
+          '<td class="px-4 py-3 text-center font-mono text-sm text-slate-600">' + row.A + '</td>' +
+          '<td class="px-4 py-3 text-center font-mono text-sm text-slate-600">' + row.B + '</td>' +
+          '<td class="px-4 py-3 text-center font-mono text-sm text-slate-600">' + row.C + '</td>' +
+          '<td class="px-4 py-3 text-center font-mono text-sm text-slate-600">' + row.G + '</td>' +
+          '<td class="px-4 py-3 text-center font-mono text-sm font-bold text-slate-900">' + row.total + '</td>' +
+          '<td class="px-4 py-3 text-center font-mono text-sm font-bold text-green-600">' + row.marked + '</td>' +
+          '<td class="px-4 py-3 text-center font-mono text-sm font-bold text-amber-600">' + row.pending + '</td>' +
+          '</tr>';
+      });
+      tbody.innerHTML = tableHtml;
+    }
+
+    var partsEl = document.getElementById('top-parts-list');
+    if (!data.top_parts || !data.top_parts.length) {
+      partsEl.innerHTML = '<div class="px-2 py-6 text-center text-slate-400 text-xs">No part data available.</div>';
+    } else {
+      var partsHtml = '';
+      data.top_parts.forEach(function(p, i) {
+        partsHtml +=
+          '<div class="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-50/60 border border-slate-100 hover:bg-white hover:shadow-sm transition-all">' +
+          '<div class="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-black">' + (i + 1) + '</div>' +
+          '<div class="flex-1 min-w-0">' +
+            '<p class="font-mono text-sm font-bold text-slate-900 truncate">' + p.part_number + '</p>' +
+            '<p class="text-[10px] text-slate-400">' + p.count.toLocaleString('en-IN') + ' parts</p>' +
+          '</div>' +
+          '<div class="text-right"><span class="text-xs font-bold text-primary font-mono">' + p.percentage + '%</span></div>' +
+          '</div>';
+      });
+      partsEl.innerHTML = partsHtml;
+    }
+  } catch(e) {
+    console.error('Production log error:', e);
+  }
+}
+
+async function loadLiveRate() {
+  try {
+    var res = await fetch('/api/serials');
+    if (!res.ok) return;
+    var serials = await res.json();
+    var now = new Date();
+    var oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    var count = 0;
+    for (var i = 0; i < serials.length; i++) {
+      var s = serials[i];
+      if (!s.created_at || s.created_at === '\u2014') continue;
+      var ts = new Date(s.created_at);
+      if (ts >= oneHourAgo && ts <= now) count++;
+    }
+    document.getElementById('kpi-live-rate').textContent = count + ' parts/hr';
+  } catch(e) {
+    console.error('Live rate error:', e);
+  }
+}
+
+loadData();
+loadLiveRate();
+setInterval(loadData, 30000);
+setInterval(loadLiveRate, 30000);
+{% endblock %}

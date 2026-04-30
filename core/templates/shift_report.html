@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Shift Report | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block content %}
+<div class="max-w-[1300px] mx-auto px-8 py-6 space-y-6">
+
+  <div class="flex items-center justify-between">
+    <div>
+      <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+        <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
+        <span class="material-symbols-outlined text-sm">chevron_right</span>
+        <span class="text-primary">Shift Report</span>
+      </nav>
+      <h2 class="text-2xl font-bold text-slate-900">Shift Performance Report</h2>
+      <p class="text-sm text-slate-500 mt-1">Live breakdown from serial database</p>
+    </div>
+    <button onclick="loadReport()"
+      class="flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:opacity-90 transition-all text-sm">
+      <span class="material-symbols-outlined text-lg">refresh</span> Refresh
+    </button>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="grid grid-cols-2 xl:grid-cols-5 gap-5">
+    <div id="kpi-all" onclick="filterShift('all')"
+      class="bg-white p-5 rounded-2xl border-2 border-primary shadow-sm cursor-pointer hover:shadow-md transition-all">
+      <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Today Total</p>
+      <div class="text-3xl font-black text-slate-900" id="sr-total">—</div>
+    </div>
+    <div id="kpi-A" onclick="filterShift('A')"
+      class="bg-white p-5 rounded-2xl border-2 border-slate-200 shadow-sm cursor-pointer hover:shadow-md hover:border-blue-400 transition-all">
+      <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Shift A</p>
+      <div class="text-3xl font-black text-blue-600" id="sr-a">—</div>
+    </div>
+    <div id="kpi-B" onclick="filterShift('B')"
+      class="bg-white p-5 rounded-2xl border-2 border-slate-200 shadow-sm cursor-pointer hover:shadow-md hover:border-indigo-400 transition-all">
+      <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Shift B</p>
+      <div class="text-3xl font-black text-indigo-600" id="sr-b">—</div>
+    </div>
+    <div id="kpi-C" onclick="filterShift('C')"
+      class="bg-white p-5 rounded-2xl border-2 border-slate-200 shadow-sm cursor-pointer hover:shadow-md hover:border-violet-400 transition-all">
+      <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Shift C</p>
+      <div class="text-3xl font-black text-violet-600" id="sr-c">—</div>
+    </div>
+    <div id="kpi-G" onclick="filterShift('G')"
+      class="bg-white p-5 rounded-2xl border-2 border-slate-200 shadow-sm cursor-pointer hover:shadow-md hover:border-amber-400 transition-all">
+      <p class="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Shift G</p>
+      <div class="text-3xl font-black text-amber-600" id="sr-g">—</div>
+    </div>
+  </div>
+
+  <!-- Shift Table -->
+  <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+    <div class="px-7 py-5 border-b border-slate-100 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 bg-primary/10 rounded-xl flex items-center justify-center">
+          <span class="material-symbols-outlined text-primary text-xl">table_chart</span>
+        </div>
+        <h4 class="font-black text-slate-900" id="table-title">Today's Serial Log — All Shifts</h4>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-slate-100 bg-slate-50/70">
+            <th class="px-7 py-4 text-left text-[11px] font-black text-slate-500 uppercase tracking-widest">Serial
+              Number</th>
+            <th class="px-7 py-4 text-left text-[11px] font-black text-slate-500 uppercase tracking-widest">Part No.
+            </th>
+            <th class="px-7 py-4 text-center text-[11px] font-black text-slate-500 uppercase tracking-widest">Line</th>
+            <th class="px-7 py-4 text-center text-[11px] font-black text-slate-500 uppercase tracking-widest">Shift</th>
+            <th class="px-7 py-4 text-center text-[11px] font-black text-slate-500 uppercase tracking-widest">Part Type</th>
+            <th class="px-7 py-4 text-center text-[11px] font-black text-slate-500 uppercase tracking-widest">Status</th>
+            <th class="px-7 py-4 text-center text-[11px] font-black text-slate-500 uppercase tracking-widest">Rotor Bal.</th>
+            <th class="px-7 py-4 text-right text-[11px] font-black text-slate-500 uppercase tracking-widest">Time</th>
+          </tr>
+        </thead>
+        <tbody id="shift-tbody" class="divide-y divide-slate-50">
+          <tr>
+            <td colspan="8" class="px-7 py-8 text-center text-slate-400 text-xs">Loading...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+let activeFilter = 'all';
+let allTodaySerials = [];
+
+const shiftColors = {
+A: 'bg-blue-50 text-blue-700',
+B: 'bg-indigo-50 text-indigo-700',
+C: 'bg-violet-50 text-violet-700',
+G: 'bg-amber-50 text-amber-700',
+};
+
+const kpiBorders = {
+all: 'border-primary',
+A: 'border-blue-500',
+B: 'border-indigo-500',
+C: 'border-violet-500',
+G: 'border-amber-500',
+};
+
+function filterShift(shift) {
+activeFilter = shift;
+highlightKpi();
+renderTable();
+}
+
+function highlightKpi() {
+['all','A','B','C','G'].forEach(key => {
+const el = document.getElementById('kpi-' + key);
+el.classList.remove('border-primary','border-blue-500','border-indigo-500','border-violet-500','border-amber-500');
+el.classList.add('border-slate-200');
+el.style.transform = '';
+});
+const active = document.getElementById('kpi-' + activeFilter);
+active.classList.remove('border-slate-200');
+active.classList.add(kpiBorders[activeFilter]);
+active.style.transform = 'scale(1.03)';
+}
+
+function renderTable() {
+const filtered = activeFilter === 'all' ? allTodaySerials : allTodaySerials.filter(s => s.shift === activeFilter);
+const label = activeFilter === 'all' ? 'All Shifts' : 'Shift ' + activeFilter;
+document.getElementById('table-title').textContent = "Today's Serial Log — " + label + ' (' + filtered.length + ')';
+
+const tbody = document.getElementById('shift-tbody');
+if (!filtered.length) {
+tbody.innerHTML = '<tr><td colspan="8" class="px-7 py-8 text-center text-slate-400 text-xs">No records for ' + label + ' today.</td></tr>';
+return;
+}
+
+tbody.innerHTML = filtered.map(function(s) {
+  var data = s || {};
+  var ptLabel = s.part_type || data.part_type || 'N/A';
+  var ptClass = ptLabel === 'Rotor' ? 'bg-blue-50 text-blue-700'
+    : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
+    : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
+    : 'bg-slate-100 text-slate-400';
+  var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+  var shiftBadge = shiftColors[s.shift] ? shiftColors[s.shift] : 'bg-slate-100 text-slate-600';
+  var statusBadgeClass = s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100';
+  var dotClass = s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500';
+  var timeStr = (s.created_at && s.created_at !== '\u2014' && s.created_at !== '—') ? new Date(s.created_at).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '\u2014';
+  
+  var rotClass = s.rotor_result === 'Pass' ? 'text-green-700 bg-green-100' : (s.rotor_result === 'Fail' ? 'text-red-700 bg-red-100' : 'text-slate-400 bg-slate-50');
+  var rotDot = s.rotor_result === 'Pass' ? 'bg-green-500' : (s.rotor_result === 'Fail' ? 'bg-red-500' : 'hidden');
+  var rotHtml = s.rotor_result ? 
+    '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + rotClass + ' px-3 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + rotDot + '"></span>' + s.rotor_result + '</span>' 
+    : '<span class="text-xs text-slate-300 font-bold px-3 py-1 bg-slate-50 rounded-full">N/A</span>';
+  
+  return '<tr class="hover:bg-slate-50/80 transition-colors">' +
+    '<td class="px-7 py-4"><span class="font-mono font-bold text-primary">' + s.serial_number + '</span></td>' +
+    '<td class="px-7 py-4"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>' +
+    '<td class="px-7 py-4 text-center text-sm font-semibold text-slate-600">' + s.line_no + '</td>' +
+    '<td class="px-7 py-4 text-center">' +
+      '<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black uppercase ' + shiftBadge + '">' +
+        'Shift ' + s.shift +
+      '</span>' +
+    '</td>' +
+    '<td class="px-7 py-4 text-center">' + ptHtml + '</td>' +
+    '<td class="px-7 py-4 text-center">' +
+      '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusBadgeClass + ' px-3 py-1 rounded-full">' +
+        '<span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status +
+      '</span>' +
+    '</td>' +
+    '<td class="px-7 py-4 text-center">' + rotHtml + '</td>' +
+    '<td class="px-7 py-4 text-right text-xs text-slate-400">' + timeStr + '</td>' +
+  '</tr>';
+
+}).join('');
+}
+
+async function loadReport() {
+const res = await fetch('/api/serials');
+const all = await res.json();
+const today = new Date().toISOString().slice(0, 10);
+allTodaySerials = all.filter(s => s.created_at && s.created_at.startsWith(today));
+
+const shiftCount = { A: 0, B: 0, C: 0, G: 0 };
+allTodaySerials.forEach(s => { if (shiftCount[s.shift] !== undefined) shiftCount[s.shift]++; });
+
+document.getElementById('sr-total').textContent = allTodaySerials.length;
+document.getElementById('sr-a').textContent = shiftCount.A;
+document.getElementById('sr-b').textContent = shiftCount.B;
+document.getElementById('sr-c').textContent = shiftCount.C;
+document.getElementById('sr-g').textContent = shiftCount.G;
+
+highlightKpi();
+renderTable();
+}
+
+loadReport();
+setInterval(loadReport, 15000);
+{% endblock %}

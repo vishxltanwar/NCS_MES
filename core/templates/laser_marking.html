@@ -1,0 +1,513 @@
+{% extends "base.html" %}
+{% block title %}Laser Marking Station | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block extra_style %}
+@keyframes laserScan { 0%{opacity:1;top:0} 100%{opacity:0.6;top:calc(100% - 2px)} }
+@keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+.fade-in { animation: fadeIn 0.35s ease forwards; }
+{% endblock %}
+
+{% block content %}
+<div class="max-w-[1400px] mx-auto px-8 py-6 space-y-5">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+        <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
+        <span class="material-symbols-outlined text-sm">chevron_right</span>
+        <span class="text-primary">Laser Marking</span>
+      </nav>
+      <h2 class="text-2xl font-bold text-slate-900">Laser Marking Station — LMS-01</h2>
+      <p class="text-sm text-slate-500 mt-0.5">Zone 2 • Fiber Laser • QR Engraving</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-lg">
+        <div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
+        <span class="text-xs font-bold text-green-700 uppercase tracking-wider">Station Online</span>
+      </div>
+      <button onclick="exportLog()" class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:opacity-90 transition-all shadow-md shadow-primary/20">
+        <span class="material-symbols-outlined text-lg">download</span> Export Log
+      </button>
+    </div>
+  </div>
+
+  <!-- KPI Row -->
+  <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Marked Today</p>
+      <h3 class="text-2xl font-bold text-slate-900" id="kpi-today">—</h3>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pending</p>
+      <h3 class="text-2xl font-bold text-amber-500" id="kpi-pending">—</h3>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Seq This Session</p>
+      <h3 class="text-2xl font-bold text-primary" id="kpi-session">0</h3>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Daily Limit</p>
+      <h3 class="text-2xl font-bold text-slate-500">999 <span class="text-sm font-normal text-slate-400">parts</span></h3>
+    </div>
+  </div>
+
+  <!-- Main Panel -->
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+
+    <!-- Left: Generator -->
+    <div class="xl:col-span-2 space-y-5">
+
+      <!-- Serial Generator Card -->
+      <div class="rounded-xl border-2 border-primary/20 bg-white shadow-sm overflow-hidden">
+        <div class="px-6 py-4 bg-primary/5 border-b border-primary/15 flex items-center gap-3">
+          <div class="rounded-lg bg-primary/15 p-2 text-primary">
+            <span class="material-symbols-outlined text-xl">tag</span>
+          </div>
+          <div>
+            <h3 class="font-bold text-slate-900">Serial Number Generator</h3>
+            <p class="text-xs text-slate-500">Format: PPPPP + LL + S + YYDDD + NNN</p>
+          </div>
+          <div class="ml-auto text-xs font-bold text-primary bg-primary/10 px-3 py-1.5 rounded-lg font-mono">3-Digit Sequence</div>
+        </div>
+
+        <div class="p-6 space-y-5">
+          <div class="grid grid-cols-4 gap-4">
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Part Type <span class="text-red-500">*</span></label>
+              <select id="part-type"
+                class="px-3 py-3 bg-slate-50 border border-slate-200 rounded-lg text-base font-mono font-bold focus:border-primary focus:ring-2 focus:ring-primary/15 outline-none transition-all appearance-none cursor-pointer">
+                <option value="">-- Select --</option>
+                <option value="Rotor">Rotor</option>
+                <option value="Stator">Stator</option>
+                <option value="Motor">Motor</option>
+              </select>
+              <p class="text-[10px] text-slate-400">Rotor / Stator / Motor</p>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Part Number <span class="text-red-500">*</span></label>
+              <datalist id="saved-parts"></datalist>
+              <input id="part-number" type="text" maxlength="5" placeholder="00000" list="saved-parts"
+                class="px-3 py-3 bg-slate-50 border border-slate-200 rounded-lg text-base font-mono font-bold text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary/15 outline-none transition-all tracking-widest placeholder:text-slate-400 placeholder:font-normal"
+                oninput="this.value=this.value.replace(/\D/g,'').slice(0,5); updatePreview(); checkSavedPart(this.value);" />
+              <p class="text-[10px] text-slate-400">Exactly 5 digits</p>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Line No. <span class="text-red-500">*</span></label>
+              <input id="line-no" type="text" maxlength="2" placeholder="00"
+                class="px-3 py-3 bg-slate-50 border border-slate-200 rounded-lg text-base font-mono font-bold text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary/15 outline-none transition-all tracking-widest placeholder:text-slate-400 placeholder:font-normal"
+                oninput="this.value=this.value.replace(/\D/g,'').slice(0,2); updatePreview()" />
+              <p class="text-[10px] text-slate-400">2 digits (e.g. 01)</p>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Shift <span class="text-red-500">*</span></label>
+              <select id="shift" onchange="updatePreview()"
+                class="px-3 py-3 bg-slate-50 border border-slate-200 rounded-lg text-base font-mono font-bold focus:border-primary focus:ring-2 focus:ring-primary/15 outline-none transition-all appearance-none cursor-pointer">
+                <option value="">-- Select --</option>
+                <option value="A">A — Morning (6:30 AM - 3:00 PM)</option>
+                <option value="B">B — Afternoon (3:00 PM - 11:30 PM)</option>
+                <option value="C">C — Night (11:30 PM - 6:30 AM)</option>
+                <option value="G">G — General (8:30 AM - 5:00 PM)</option>
+              </select>
+              <p class="text-[10px] text-slate-400">A / B / C / G</p>
+            </div>
+          </div>
+
+          <!-- Live Preview -->
+          <div class="bg-slate-950 rounded-xl p-5">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Serial Preview</span>
+              <span class="text-[10px] text-slate-600 font-mono" id="preview-breakdown">—</span>
+            </div>
+            <div class="font-mono text-2xl font-bold text-primary tracking-[0.2em]" id="sn-preview">_ _ _ _ _ - _ _ - _ - _ _ _ _ _ - _ _ _</div>
+            <div class="mt-3 flex gap-2 flex-wrap text-[10px] font-mono text-slate-500" id="preview-segments"></div>
+          </div>
+
+          <!-- Action buttons -->
+          <div class="flex gap-3">
+            <button onclick="generateSerial()" id="gen-btn"
+              class="flex-1 flex items-center justify-center gap-2 bg-primary text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 hover:opacity-90 transition-all text-base active:scale-[0.99]">
+              <span class="material-symbols-outlined text-xl">highlight</span>
+              Generate &amp; Mark
+            </button>
+            <button onclick="clearForm()"
+              class="px-5 flex items-center justify-center gap-2 border-2 border-slate-200 text-slate-600 font-bold py-4 rounded-xl hover:bg-slate-50 transition-all">
+              <span class="material-symbols-outlined text-xl">clear</span>
+              Clear
+            </button>
+          </div>
+
+          <!-- Error box -->
+          <div id="gen-error" class="hidden flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-xl">
+            <span class="material-symbols-outlined text-red-500 text-lg">error</span>
+            <p id="gen-error-text" class="text-sm text-red-600 font-medium"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Today's Serial Log Table -->
+      <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h3 class="font-bold text-sm text-slate-900 uppercase tracking-tight">Today's Serial Log</h3>
+            <span id="table-count" class="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">0 records</span>
+          </div>
+          <button onclick="loadSerials()" class="text-xs text-slate-400 hover:text-primary transition-colors flex items-center gap-1">
+            <span class="material-symbols-outlined text-base">refresh</span>
+          </button>
+        </div>
+        <div class="overflow-x-auto" style="max-height:300px; overflow-y:auto;">
+          <table class="w-full text-left text-sm">
+            <thead class="sticky top-0 bg-white z-10">
+              <tr class="bg-slate-50 border-b border-slate-100">
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Serial Number</th>
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Part</th>
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Line</th>
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Shift</th>
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Part Type</th>
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Status</th>
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Action</th>
+                <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-right">Time</th>
+              </tr>
+            </thead>
+            <tbody id="serials-tbody" class="divide-y divide-slate-50">
+              <tr>
+                <td colspan="8" class="px-5 py-6 text-center text-slate-400 text-xs">No records yet — generate a serial above</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Visualizer + Log -->
+    <div class="space-y-5">
+
+      <!-- Laser Visualizer -->
+      <div class="rounded-xl border border-slate-200 bg-slate-950 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+          <div class="flex items-center gap-1.5">
+            <div class="h-2.5 w-2.5 rounded-full bg-red-500"></div>
+            <div class="h-2.5 w-2.5 rounded-full bg-yellow-500"></div>
+            <div class="h-2.5 w-2.5 rounded-full bg-green-500"></div>
+          </div>
+          <span class="text-xs font-mono text-slate-500">lms-01.preview</span>
+          <span id="station-dot" class="flex items-center gap-1.5 text-xs font-bold text-green-400">
+            <span class="h-2 w-2 rounded-full bg-green-400 animate-pulse"></span> READY
+          </span>
+        </div>
+        <div class="p-5 flex flex-col gap-4">
+          <div id="laser-surface" class="relative w-full h-36 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl border border-slate-700 overflow-hidden flex items-center justify-center">
+            <div class="absolute inset-0 opacity-10" style="background-image:linear-gradient(rgba(99,91,255,.4) 1px,transparent 1px),linear-gradient(90deg,rgba(99,91,255,.4) 1px,transparent 1px);background-size:20px 20px;"></div>
+            <div id="laser-beam" style="position:absolute;top:0;left:10%;right:10%;height:2px;background:linear-gradient(90deg,transparent,#635BFF,transparent);box-shadow:0 0 14px 4px #635BFF;opacity:0;pointer-events:none;"></div>
+            <div id="engraved-text" class="font-mono text-base font-bold text-slate-600 tracking-widest text-center px-4 select-none leading-relaxed">—</div>
+          </div>
+          <div class="bg-slate-900 rounded-xl p-4 border border-slate-800">
+            <p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Last Generated SN</p>
+            <p id="current-sn" class="font-mono text-lg font-bold text-primary tracking-wider">—</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Session Log -->
+      <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-10">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-lg text-primary">history</span>
+            <h3 class="font-bold text-sm text-slate-900">Session Log</h3>
+          </div>
+          <div class="flex items-center gap-3">
+            <span id="log-count" class="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">0</span>
+            <button onclick="clearLog()" class="text-[10px] font-bold text-slate-400 hover:text-red-500 transition-colors">Clear</button>
+          </div>
+        </div>
+        <div id="session-log" class="overflow-y-auto p-3 space-y-2" style="max-height:260px;">
+          <div class="flex items-center gap-2 py-2 px-3 rounded-lg bg-slate-50 text-slate-400 text-xs">
+            <span class="material-symbols-outlined text-base">info</span>
+            <span>Generate a serial to begin.</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+var sessionCount = 0;
+var logEntries = [];
+var savedPartsData = [];
+
+// ── Part Type → Part Number auto-fill mapping ────────────────────────────────
+var PART_TYPE_MAP = { 'Rotor': '30051', 'Stator': '30048', 'Motor': '10045' };
+
+document.getElementById('part-type').addEventListener('change', function() {
+  var partInput = document.getElementById('part-number');
+  var selected = this.value;
+  if (PART_TYPE_MAP[selected]) {
+    partInput.value = PART_TYPE_MAP[selected];
+    partInput.readOnly = true;
+    partInput.classList.add('bg-slate-100', 'cursor-not-allowed');
+    partInput.classList.remove('bg-slate-50');
+  } else {
+    partInput.value = '';
+    partInput.readOnly = false;
+    partInput.classList.remove('bg-slate-100', 'cursor-not-allowed');
+    partInput.classList.add('bg-slate-50');
+  }
+  updatePreview();
+});
+
+async function loadSavedParts() {
+  try {
+    var res = await fetch('/api/parts');
+    if (!res.ok) return;
+    var parts = await res.json();
+    savedPartsData = parts;
+    var dl = document.getElementById('saved-parts');
+    dl.innerHTML = parts.map(function(p) { return '<option value="' + p.part_number + '">' + p.part_name + ' (Line: ' + p.line_no + ', Shift: ' + p.shift + ')</option>'; }).join('');
+  } catch(e) {}
+}
+
+function checkSavedPart(val) {
+  if (val.length === 5 && savedPartsData.length > 0) {
+    var match = savedPartsData.find(function(p) { return p.part_number === val; });
+    if (match) {
+      document.getElementById('part-type').value = match.part_name;
+      document.getElementById('line-no').value = match.line_no;
+      document.getElementById('shift').value = match.shift;
+      updatePreview();
+    }
+  }
+}
+
+function updatePreview() {
+  var part = document.getElementById('part-number').value.padEnd(5, '_').slice(0, 5);
+  var line = document.getElementById('line-no').value.padEnd(2, '_').slice(0, 2);
+  var shift = document.getElementById('shift').value || '_';
+  var now = new Date();
+  var yy = String(now.getFullYear()).slice(-2);
+  var diff = now - new Date(now.getFullYear(), 0, 0);
+  var days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  var ddd = String(days).padStart(3, '0');
+  document.getElementById('sn-preview').textContent = part + line + shift + yy + ddd + '???';
+  document.getElementById('preview-segments').innerHTML =
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Part: ' + part + '</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Line: ' + line + '</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Shift: ' + shift + '</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Date: ' + yy + ddd + '</span> ' +
+    '<span class="px-2 py-0.5 bg-indigo-900 rounded text-indigo-300">Seq: NNN (3-digit)</span>';
+}
+
+function runLaser(duration) {
+  duration = duration || 1600;
+  return new Promise(function(resolve) {
+    var beam = document.getElementById('laser-beam');
+    var surface = document.getElementById('laser-surface');
+    var dot = document.getElementById('station-dot');
+    var surfH = surface.offsetHeight;
+    dot.innerHTML = '<span class="h-2 w-2 rounded-full bg-primary animate-pulse"></span> MARKING';
+    dot.className = 'flex items-center gap-1.5 text-xs font-bold text-primary';
+    beam.style.opacity = '1';
+    beam.style.top = '0px';
+    var start = null;
+    function step(ts) {
+      if (!start) start = ts;
+      var p = Math.min((ts - start) / duration, 1);
+      beam.style.top = (p * surfH) + 'px';
+      if (p < 1) {
+        requestAnimationFrame(step);
+      } else {
+        beam.style.opacity = '0';
+        beam.style.top = '0px';
+        dot.innerHTML = '<span class="h-2 w-2 rounded-full bg-green-400 animate-pulse"></span> READY';
+        dot.className = 'flex items-center gap-1.5 text-xs font-bold text-green-400';
+        resolve();
+      }
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+async function generateSerial() {
+  var part = document.getElementById('part-number').value.trim();
+  var line = document.getElementById('line-no').value.trim();
+  var shift = document.getElementById('shift').value;
+  var partType = document.getElementById('part-type').value;
+  var errBox = document.getElementById('gen-error');
+  var btn = document.getElementById('gen-btn');
+  errBox.classList.add('hidden');
+  errBox.classList.remove('flex');
+  if (part.length !== 5) { showErr('Part number must be exactly 5 digits'); return; }
+  if (line.length !== 2) { showErr('Line number must be exactly 2 digits (e.g. 01)'); return; }
+  if (!shift) { showErr('Please select a shift'); return; }
+  if (!partType) { showErr('Please select a part type'); return; }
+  btn.disabled = true;
+  btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-xl">progress_activity</span> Generating...';
+  var laserP = runLaser(1400);
+  var res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ part_number: part, line_no: line, shift: shift, part_type: partType })
+  });
+  await laserP;
+  if (!res.ok) {
+    var d = await res.json();
+    showErr(d.detail || 'Server error');
+    btn.disabled = false;
+    btn.innerHTML = '<span class="material-symbols-outlined text-xl">highlight</span> Generate &amp; Mark';
+    return;
+  }
+  var data = await res.json();
+  var sn = data.serial;
+  document.getElementById('engraved-text').textContent = sn;
+  document.getElementById('current-sn').textContent = sn;
+  sessionCount++;
+  document.getElementById('kpi-session').textContent = sessionCount;
+  addToLog(sn);
+  await loadSerials();
+  await loadStats();
+  showToast('Serial generated: ' + sn, 'success');
+  btn.disabled = false;
+  btn.innerHTML = '<span class="material-symbols-outlined text-xl">highlight</span> Generate &amp; Mark';
+  clearForm();
+}
+
+function showErr(msg) {
+  var errBox = document.getElementById('gen-error');
+  document.getElementById('gen-error-text').textContent = msg;
+  errBox.classList.remove('hidden');
+  errBox.classList.add('flex');
+}
+
+function clearForm() {
+  var now = new Date();
+  var yy = String(now.getFullYear()).slice(-2);
+  var diff = now - new Date(now.getFullYear(), 0, 0);
+  var ddd = String(Math.floor(diff / (1000 * 60 * 60 * 24))).padStart(3, '0');
+  var partInput = document.getElementById('part-number');
+  partInput.value = '';
+  partInput.readOnly = false;
+  partInput.classList.remove('bg-slate-100', 'cursor-not-allowed');
+  partInput.classList.add('bg-slate-50');
+  document.getElementById('line-no').value = '';
+  document.getElementById('shift').value = '';
+  document.getElementById('part-type').value = '';
+  document.getElementById('sn-preview').textContent = '_____' + '__' + '_' + yy + ddd + '???';
+  document.getElementById('preview-segments').innerHTML =
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Part: _____</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Line: __</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Shift: _</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Date: ' + yy + ddd + '</span> ' +
+    '<span class="px-2 py-0.5 bg-indigo-900 rounded text-indigo-300">Seq: NNN (3-digit)</span>';
+  document.getElementById('gen-error').classList.add('hidden');
+}
+
+function addToLog(sn) {
+  logEntries.unshift(sn);
+  var log = document.getElementById('session-log');
+  document.getElementById('log-count').textContent = logEntries.length;
+  var time = new Date().toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' });
+  var el = document.createElement('div');
+  el.className = 'flex items-center gap-3 py-2 px-3 rounded-lg bg-green-50 border border-green-100 fade-in';
+  el.innerHTML = '<span class="material-symbols-outlined text-base text-green-500">check_circle</span>' +
+    '<div class="flex-1 min-w-0">' +
+    '<p class="font-mono text-xs font-bold text-slate-900 truncate">' + sn + '</p>' +
+    '<p class="text-[10px] text-slate-400">' + time + '</p>' +
+    '</div>';
+  if (logEntries.length === 1) log.innerHTML = '';
+  log.insertBefore(el, log.firstChild);
+}
+
+function clearLog() {
+  logEntries = [];
+  sessionCount = 0;
+  document.getElementById('session-log').innerHTML =
+    '<div class="flex items-center gap-2 py-2 px-3 rounded-lg bg-slate-50 text-slate-400 text-xs">' +
+    '<span class="material-symbols-outlined text-base">info</span>' +
+    '<span>Generate a serial to begin.</span></div>';
+  document.getElementById('log-count').textContent = '0';
+  document.getElementById('kpi-session').textContent = '0';
+}
+
+async function markDone(serial) {
+  var res = await fetch('/api/mark-done', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serial: serial })
+  });
+  if (res.ok) {
+    showToast('Marked as done: ' + serial, 'success');
+    loadSerials();
+    loadStats();
+  }
+}
+
+async function loadSerials() {
+  var res = await fetch('/api/serials');
+  var serials = await res.json();
+  var today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  var todaySerials = serials.filter(function(s) {
+    if (!s.created_at || s.created_at === '--') return false;
+    var istDate = new Date(s.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    return istDate === today;
+  });
+  document.getElementById('table-count').textContent = todaySerials.length + ' records';
+  var tbody = document.getElementById('serials-tbody');
+  if (!todaySerials.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="px-5 py-6 text-center text-slate-400 text-xs">No records today</td></tr>';
+    return;
+  }
+  tbody.innerHTML = todaySerials.map(function(s) {
+    var statusClass = s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100';
+    var dotClass = s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500';
+    var actionCell = s.status !== 'Marked'
+      ? '<button onclick="markDone(\'' + s.serial_number + '\')" class="text-xs font-bold text-primary hover:underline">Mark Done</button>'
+      : '<span class="text-xs text-slate-300">&#8212;</span>';
+    var timeCell = (s.created_at && s.created_at !== '--')
+      ? new Date(s.created_at).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })
+      : '--';
+    var data = s || {};
+    var ptLabel = s.part_type || data.part_type || 'N/A';
+    var ptClass = ptLabel === 'Rotor' ? 'bg-blue-50 text-blue-700'
+      : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
+      : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
+      : 'bg-slate-100 text-slate-400';
+    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+    return '<tr class="hover:bg-slate-50 transition-colors">'
+      + '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + s.serial_number + '</span></td>'
+      + '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>'
+      + '<td class="px-5 py-3 text-sm text-slate-600 font-medium">' + s.line_no + '</td>'
+      + '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">' + s.shift + '</span></td>'
+      + '<td class="px-5 py-3">' + ptHtml + '</td>'
+      + '<td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2 py-0.5 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status + '</span></td>'
+      + '<td class="px-5 py-3">' + actionCell + '</td>'
+      + '<td class="px-5 py-3 text-right text-xs text-slate-400">' + timeCell + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+async function loadStats() {
+  var res = await fetch('/api/stats');
+  var d = await res.json();
+  document.getElementById('kpi-today').textContent = d.total_today;
+  document.getElementById('kpi-pending').textContent = d.pending_today;
+}
+
+function exportLog() {
+  if (!logEntries.length) { showToast('No session records to export', 'warning'); return; }
+  var csv = 'Serial Number,Time\n' + logEntries.map(function(s, i) { return s + ',Session entry ' + (i + 1); }).join('\n');
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'laser_session_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  showToast('Log exported', 'success');
+}
+
+updatePreview();
+loadSavedParts();
+loadSerials();
+loadStats();
+setInterval(function() { loadSerials(); loadStats(); }, 10000);
+{% endblock %}

@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Traceability | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block content %}
+<div class="max-w-[1200px] mx-auto px-8 py-6 space-y-6">
+
+  <div>
+    <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+      <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
+      <span class="material-symbols-outlined text-sm">chevron_right</span>
+      <span class="text-primary">Traceability</span>
+    </nav>
+    <h2 class="text-2xl font-bold text-slate-900">Serial Traceability Search</h2>
+    <p class="text-slate-500 text-sm mt-1">Search any serial number to view its full production record.</p>
+  </div>
+
+  <!-- Search -->
+  <div
+    class="relative flex items-center bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-lg focus-within:border-primary transition-all">
+    <span class="material-symbols-outlined ml-5 text-slate-400 text-2xl">search</span>
+    <input id="trace-input" type="text" placeholder="Enter or paste a serial number..."
+      class="w-full py-4 px-4 bg-transparent border-none text-lg font-mono focus:ring-0 placeholder:text-slate-300 outline-none" />
+    <button onclick="searchSerial()"
+      class="mr-4 bg-primary text-white px-8 py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-lg shadow-primary/20">
+      Search <span class="material-symbols-outlined">barcode_scanner</span>
+    </button>
+  </div>
+
+  <!-- Result -->
+  <div id="placeholder-msg" class="flex flex-col items-center gap-3 py-16 text-slate-400">
+    <span class="material-symbols-outlined text-5xl">manage_search</span>
+    <p class="text-sm font-semibold">Enter a serial number above to view its record</p>
+  </div>
+
+  <div id="result-area" style="display:none">
+    <!-- All serials table -->
+    <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <h3 class="font-bold text-slate-900 text-sm uppercase tracking-tight">All Serial Records</h3>
+        <button onclick="loadAll()"
+          class="text-xs text-slate-400 hover:text-primary flex items-center gap-1 transition-colors">
+          <span class="material-symbols-outlined text-base">refresh</span> Refresh
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-100">
+              <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">#</th>
+              <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Serial Number</th>
+              <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Part</th>
+              <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Line</th>
+              <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Shift</th>
+              <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500">Status</th>
+              <th class="px-6 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-right">Created At
+              </th>
+            </tr>
+          </thead>
+          <tbody id="all-tbody" class="divide-y divide-slate-50">
+            <tr>
+              <td colspan="7" class="px-6 py-8 text-center text-slate-400 text-xs">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search result detail -->
+  <div id="detail-area" class="hidden space-y-4">
+    <div class="flex items-center justify-between border-b-2 border-slate-200 pb-4">
+      <div>
+        <div class="flex items-center gap-3 mb-1">
+          <span class="text-xs font-black bg-slate-900 text-white px-2 py-0.5 rounded">FOUND</span>
+          <h2 class="text-xl font-black">Serial Detail</h2>
+        </div>
+        <p class="text-slate-500 font-medium">SN: <span id="detail-sn" class="font-mono font-bold text-primary"></span>
+        </p>
+      </div>
+      <button onclick="closeDetail()"
+        class="text-xs font-bold text-slate-400 hover:text-slate-700 flex items-center gap-1">
+        <span class="material-symbols-outlined text-base">close</span> Close
+      </button>
+    </div>
+    <div id="detail-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+  </div>
+
+  <div id="not-found" style="display:none"
+    class="flex-col items-center gap-4 p-6 bg-red-50 border border-red-200 rounded-xl text-center">
+    <span class="material-symbols-outlined text-red-500 text-4xl">search_off</span>
+    <div>
+      <p class="text-sm text-red-700 font-bold">No Record Found</p>
+      <p class="text-xs text-red-500 mt-1">The serial number you searched does not exist in the database.</p>
+    </div>
+    <button onclick="closeDetail()"
+      class="mt-1 text-xs font-bold text-red-600 hover:text-red-800 inline-flex items-center gap-1">
+      <span class="material-symbols-outlined text-base">arrow_back</span> Back to all records
+    </button>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+async function loadAll() {
+const res = await fetch('/api/serials');
+const serials = await res.json();
+const tbody = document.getElementById('all-tbody');
+
+if (!serials.length) {
+tbody.innerHTML = `<tr>
+  <td colspan="7" class="px-6 py-8 text-center text-slate-400 text-xs">No records yet.</td>
+</tr>`;
+return;
+}
+
+tbody.innerHTML = serials.map((s, i) => {
+const sJson = JSON.stringify(s).replace(/&/g, '&amp;').replace(/'/g, '&apos;').replace(/"/g, '&quot;');
+return `
+<tr class="hover:bg-slate-50 transition-colors cursor-pointer" onclick="showDetail(JSON.parse(this.dataset.item))"
+  data-item="${sJson}">
+  <td class="px-6 py-3 text-slate-400 font-medium">${s.id}</td>
+  <td class="px-6 py-3"><span class="font-mono font-bold text-primary">${s.serial_number}</span></td>
+  <td class="px-6 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold">${s.part_number}</span></td>
+  <td class="px-6 py-3 font-medium text-slate-600">${s.line_no}</td>
+  <td class="px-6 py-3">
+    <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">${s.shift}</span>
+  </td>
+  <td class="px-6 py-3">
+    <span
+      class="inline-flex items-center gap-1.5 text-xs font-bold ${s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100'} px-2.5 py-1 rounded-full">
+      <span
+        class="h-1.5 w-1.5 rounded-full ${s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500'}"></span>${s.status}
+    </span>
+  </td>
+  <td class="px-6 py-3 text-right text-xs text-slate-400">
+    <span class="block">${s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—'}</span>
+    <span class="block text-[10px] text-slate-300">${s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—'}</span>
+  </td>
+</tr>
+`
+}).join('');
+}
+
+async function searchSerial() {
+const q = document.getElementById('trace-input').value.trim().toUpperCase();
+if (!q) return;
+document.getElementById('placeholder-msg').style.display = 'none';
+const res = await fetch('/api/serials');
+const serials = await res.json();
+const found = serials.find(s => s.serial_number.toUpperCase().trim() === q);
+
+document.getElementById('not-found').style.display = 'none';
+document.getElementById('detail-area').classList.add('hidden');
+document.getElementById('result-area').style.display = 'none';
+
+if (found) {
+showDetail(found);
+} else {
+document.getElementById('not-found').style.display = 'flex';
+}
+}
+
+function showDetail(s) {
+var data = s || {};
+var ptLabel = s.part_type || data.part_type || 'N/A';
+var ptClass = ptLabel === 'Rotor' ? 'bg-blue-50 text-blue-700'
+  : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
+  : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
+  : 'bg-slate-100 text-slate-400';
+var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+
+document.getElementById('detail-sn').textContent = s.serial_number;
+var cards = [
+{ label:'Part Number', value: s.part_number, color:'slate' },
+{ label:'Line No.', value: s.line_no, color:'slate' },
+{ label:'Shift', value: s.shift, color:'indigo' },
+{ label:'Part Type', value: ptHtml, color:'slate' },
+{ label:'Status', value: s.status, color: s.status === 'Marked' ? 'green' : 'amber' },
+{ label:'Created At', value: s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—', color:'slate' },
+{ label:'Record ID', value: '#' + s.id, color:'slate' }
+];
+
+if (s.rotor_result) {
+  var rsColor = s.rotor_result === 'Pass' ? 'text-green-600' : 'text-red-600';
+  var rsVal = '<span class="' + rsColor + '">' + s.rotor_result + '</span>';
+  cards.push({ label:'Rotor Balancing', value: rsVal, color: 'slate' });
+}
+
+var htmlOut = '';
+for (var i = 0; i < cards.length; i++) {
+  var c = cards[i];
+  htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
+             '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
+             '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
+             '</div>';
+}
+document.getElementById('detail-cards').innerHTML = htmlOut;
+
+document.getElementById('detail-area').classList.remove('hidden');
+document.getElementById('detail-area').scrollIntoView({ behavior:'smooth' });
+}
+
+function closeDetail() {
+document.getElementById('detail-area').classList.add('hidden');
+document.getElementById('not-found').style.display = 'none';
+document.getElementById('trace-input').value = '';
+document.getElementById('placeholder-msg').style.display = 'flex';
+}
+
+document.getElementById('trace-input').addEventListener('keydown', e => {
+if (e.key === 'Enter') searchSerial();
+});
+{% endblock %}
