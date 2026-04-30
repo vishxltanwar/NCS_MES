@@ -23,6 +23,7 @@ urlpatterns = [
     path('api/generate', views.api_generate, name='api_generate'),
     path('api/serials', views.api_serials, name='api_serials'),
     path('api/serials/<int:serial_id>', views.api_delete_serial, name='api_delete_serial'),
+    path('api/traceability/search/', views.api_traceability_search, name='api_traceability_search'),
     path('api/mark-done', views.api_mark_done, name='api_mark_done'),
     path('api/stats', views.api_stats, name='api_stats'),
 

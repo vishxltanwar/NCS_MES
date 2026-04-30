@@ -258,6 +258,11 @@ def api_stats(request):
     rotor_pass = rotor_today_objs.filter(result='Pass').count()
     rotor_fail = rotor_today_objs.filter(result='Fail').count()
     
+    stator_today_objs = StatorBalancingRecord.objects.filter(imported_at__date=today)
+    stator_total = stator_today_objs.count()
+    stator_pass = stator_today_objs.filter(final_result__iexact='Pass').count()
+    stator_fail = stator_today_objs.filter(final_result__iexact='Fail').count()
+    
     return Response({
         'total_today': total_today,
         'marked_today': marked_today,
@@ -266,7 +271,71 @@ def api_stats(request):
         'rotor_total': rotor_total,
         'rotor_pass': rotor_pass,
         'rotor_fail': rotor_fail,
+        'stator_total': stator_total,
+        'stator_pass': stator_pass,
+        'stator_fail': stator_fail,
     })
+
+
+@api_view(['GET'])
+def api_traceability_search(request):
+    serial = request.query_params.get('serial', '').strip()
+    if not serial:
+        return Response({'detail': 'serial parameter is required'}, status=400)
+    
+    response_data = {}
+    
+    # Laser Marking
+    laser = Serial.objects.filter(serial_number__iexact=serial).first()
+    if laser:
+        response_data['laser_marking'] = {
+            'id': laser.id,
+            'serial_number': laser.serial_number,
+            'part_number': laser.part_number,
+            'line_no': laser.line_no,
+            'shift': laser.shift,
+            'part_type': laser.part_type or '',
+            'status': laser.status,
+            'created_at': laser.created_at.astimezone(IST).isoformat() if laser.created_at else '—',
+        }
+        
+    # Rotor Balancing
+    rotor = RotorBalancing.objects.filter(serial_number__iexact=serial).first()
+    if rotor:
+        response_data['rotor_balancing'] = {
+            'id': rotor.id,
+            'serial_number': rotor.serial_number,
+            'result': rotor.result,
+            'rotor_type': rotor.rotor_type or '',
+            'measure_run': rotor.measure_run or '',
+            'balancing_run': rotor.balancing_run or '',
+            'rpm': rotor.rpm or '',
+            'plane1_weight': rotor.plane1_weight,
+            'plane1_degree': rotor.plane1_degree,
+            'plane2_weight': rotor.plane2_weight,
+            'plane2_degree': rotor.plane2_degree,
+            'recorded_at': rotor.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if rotor.recorded_at else '',
+            'imported_at': rotor.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if rotor.imported_at else '',
+        }
+        
+    # Stator Balancing
+    stator = StatorBalancingRecord.objects.filter(serial_number__iexact=serial).first()
+    if stator:
+        response_data['stator_balancing'] = {
+            'id': stator.id,
+            'serial_number': stator.serial_number,
+            'final_result': stator.final_result,
+            'ry': stator.ry or '',
+            'ry_result': stator.ry_result or '',
+            'surge_voltage': stator.surge_voltage or '',
+            'recorded_at': stator.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if stator.recorded_at else '',
+            'imported_at': stator.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if stator.imported_at else '',
+        }
+        
+    if not response_data:
+        return Response({'detail': 'No Record Found'}, status=404)
+        
+    return Response(response_data)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

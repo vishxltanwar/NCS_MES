@@ -82,7 +82,7 @@
         <span class="material-symbols-outlined text-base">close</span> Close
       </button>
     </div>
-    <div id="detail-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+    <div id="detail-cards" class="space-y-6"></div>
   </div>
 
   <div id="not-found" style="display:none"
@@ -117,7 +117,7 @@ return;
 tbody.innerHTML = serials.map((s, i) => {
 const sJson = JSON.stringify(s).replace(/&/g, '&amp;').replace(/'/g, '&apos;').replace(/"/g, '&quot;');
 return `
-<tr class="hover:bg-slate-50 transition-colors cursor-pointer" onclick="showDetail(JSON.parse(this.dataset.item))"
+<tr class="hover:bg-slate-50 transition-colors cursor-pointer" onclick="searchSerialStr('${s.serial_number}')"
   data-item="${sJson}">
   <td class="px-6 py-3 text-slate-400 font-medium">${s.id}</td>
   <td class="px-6 py-3"><span class="font-mono font-bold text-primary">${s.serial_number}</span></td>
@@ -142,63 +142,119 @@ return `
 }).join('');
 }
 
+async function searchSerialStr(sn) {
+  document.getElementById('trace-input').value = sn;
+  await searchSerial();
+}
+
 async function searchSerial() {
 const q = document.getElementById('trace-input').value.trim().toUpperCase();
 if (!q) return;
 document.getElementById('placeholder-msg').style.display = 'none';
-const res = await fetch('/api/serials');
-const serials = await res.json();
-const found = serials.find(s => s.serial_number.toUpperCase().trim() === q);
-
 document.getElementById('not-found').style.display = 'none';
 document.getElementById('detail-area').classList.add('hidden');
 document.getElementById('result-area').style.display = 'none';
 
-if (found) {
-showDetail(found);
-} else {
-document.getElementById('not-found').style.display = 'flex';
+try {
+  const res = await fetch('/api/traceability/search/?serial=' + encodeURIComponent(q));
+  if (!res.ok) {
+    document.getElementById('not-found').style.display = 'flex';
+    return;
+  }
+  const data = await res.json();
+  showDetail(data, q);
+} catch (err) {
+  document.getElementById('not-found').style.display = 'flex';
 }
 }
 
-function showDetail(s) {
-var data = s || {};
-var ptLabel = s.part_type || data.part_type || 'N/A';
-var ptClass = ptLabel === 'Rotor' ? 'bg-blue-50 text-blue-700'
-  : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
-  : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
-  : 'bg-slate-100 text-slate-400';
-var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+function showDetail(data, sn) {
+  document.getElementById('detail-sn').textContent = sn;
+  var htmlOut = '';
 
-document.getElementById('detail-sn').textContent = s.serial_number;
-var cards = [
-{ label:'Part Number', value: s.part_number, color:'slate' },
-{ label:'Line No.', value: s.line_no, color:'slate' },
-{ label:'Shift', value: s.shift, color:'indigo' },
-{ label:'Part Type', value: ptHtml, color:'slate' },
-{ label:'Status', value: s.status, color: s.status === 'Marked' ? 'green' : 'amber' },
-{ label:'Created At', value: s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—', color:'slate' },
-{ label:'Record ID', value: '#' + s.id, color:'slate' }
-];
+  if (data.laser_marking) {
+    var s = data.laser_marking;
+    var ptLabel = s.part_type || 'N/A';
+    var ptClass = ptLabel === 'Rotor' ? 'bg-blue-50 text-blue-700'
+      : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
+      : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
+      : 'bg-slate-100 text-slate-400';
+    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
 
-if (s.rotor_result) {
-  var rsColor = s.rotor_result === 'Pass' ? 'text-green-600' : 'text-red-600';
-  var rsVal = '<span class="' + rsColor + '">' + s.rotor_result + '</span>';
-  cards.push({ label:'Rotor Balancing', value: rsVal, color: 'slate' });
-}
+    var cards = [
+      { label:'Part Number', value: s.part_number },
+      { label:'Line No.', value: s.line_no },
+      { label:'Shift', value: s.shift },
+      { label:'Part Type', value: ptHtml },
+      { label:'Status', value: '<span class="' + (s.status === 'Marked' ? 'text-green-600' : 'text-amber-600') + '">' + s.status + '</span>' },
+      { label:'Created At', value: s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—' },
+      { label:'Record ID', value: '#' + s.id }
+    ];
 
-var htmlOut = '';
-for (var i = 0; i < cards.length; i++) {
-  var c = cards[i];
-  htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
-             '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
-             '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
-             '</div>';
-}
-document.getElementById('detail-cards').innerHTML = htmlOut;
+    htmlOut += '<div class="mt-2"><h3 class="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2 flex items-center gap-2"><span class="material-symbols-outlined text-green-500 text-lg">precision_manufacturing</span> Laser Marking</h3><div class="grid grid-cols-2 md:grid-cols-4 gap-4">';
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
+                 '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
+                 '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
+                 '</div>';
+    }
+    htmlOut += '</div></div>';
+  }
 
-document.getElementById('detail-area').classList.remove('hidden');
-document.getElementById('detail-area').scrollIntoView({ behavior:'smooth' });
+  if (data.rotor_balancing) {
+    var r = data.rotor_balancing;
+    var rsColor = r.result === 'Pass' ? 'text-green-600' : 'text-red-600';
+    var rsVal = '<span class="' + rsColor + '">' + r.result + '</span>';
+    
+    var rCards = [
+      { label:'Result', value: rsVal },
+      { label:'Rotor Type', value: r.rotor_type || '—' },
+      { label:'Measure Run', value: r.measure_run !== '' ? r.measure_run : '—' },
+      { label:'Balancing Run', value: r.balancing_run !== '' ? r.balancing_run : '—' },
+      { label:'RPM', value: r.rpm !== '' ? r.rpm : '—' },
+      { label:'Recorded At', value: r.recorded_at || '—' }
+    ];
+    
+    htmlOut += '<div class="mt-6"><h3 class="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2 flex items-center gap-2"><span class="material-symbols-outlined text-blue-500 text-lg">settings</span> Rotor Balancing</h3><div class="grid grid-cols-2 md:grid-cols-4 gap-4">';
+    for (var i = 0; i < rCards.length; i++) {
+      var c = rCards[i];
+      htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
+                 '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
+                 '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
+                 '</div>';
+    }
+    htmlOut += '</div></div>';
+  }
+
+  if (data.stator_balancing) {
+    var st = data.stator_balancing;
+    var stColor = st.final_result === 'PASS' || st.final_result === 'Pass' ? 'text-green-600' : 'text-red-600';
+    var stVal = '<span class="' + stColor + '">' + st.final_result + '</span>';
+    
+    var sCards = [
+      { label:'Final Result', value: stVal },
+      { label:'R/Y', value: st.ry || '—' },
+      { label:'R/Y Result', value: st.ry_result || '—' },
+      { label:'Surge Voltage', value: st.surge_voltage || '—' },
+      { label:'Recorded At', value: st.recorded_at || '—' }
+    ];
+    
+    htmlOut += '<div class="mt-6"><h3 class="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2 flex items-center gap-2"><span class="material-symbols-outlined text-purple-500 text-lg">bolt</span> Stator Balancing</h3><div class="grid grid-cols-2 md:grid-cols-4 gap-4">';
+    for (var i = 0; i < sCards.length; i++) {
+      var c = sCards[i];
+      htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
+                 '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
+                 '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
+                 '</div>';
+    }
+    htmlOut += '</div></div>';
+  }
+
+  document.getElementById('detail-cards').innerHTML = htmlOut;
+
+  document.getElementById('detail-area').classList.remove('hidden');
+  document.getElementById('detail-area').scrollIntoView({ behavior:'smooth' });
 }
 
 function closeDetail() {
