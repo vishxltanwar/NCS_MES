@@ -15,3 +15,10 @@ class PartAdmin(admin.ModelAdmin):
     list_display = ('serial_number', 'part_number', 'part_name', 'line_no', 'shift', 'added_by', 'created_at')
     list_filter = ('part_name', 'shift')
     search_fields = ('serial_number', 'part_number')
+
+
+# ── Admin Branding ──────────────────────────────────────────────────────────
+admin.site.site_header = "MES administration"
+admin.site.site_title = "MES Admin Portal"
+admin.site.index_title = "Welcome to MES Admin"
+

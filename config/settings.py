@@ -1,5 +1,5 @@
 """
-Django settings for mes_project (Napino MES).
+Django settings for config (Napino MES).
 """
 import os
 from pathlib import Path
@@ -42,13 +42,13 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'mes_project.urls'
+ROOT_URLCONF = 'config.urls'
 
 # ── Templates ─────────────────────────────────────────────────────────────────
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -61,7 +61,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'mes_project.wsgi.application'
+WSGI_APPLICATION = 'config.wsgi.application'
 
 # ── Database (PostgreSQL) ─────────────────────────────────────────────────────
 DATABASES = {
@@ -102,9 +102,18 @@ USE_TZ = True
 
 # ── Static files ──────────────────────────────────────────────────────────────
 STATIC_URL = '/static/'
+STATICFILES_DIRS = [BASE_DIR / 'static']
 
 # ── Default PK ────────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── Sessions (in-memory — cleared on server restart) ─────────────────────────
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+    }
+}
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 
 # ── Login redirect ────────────────────────────────────────────────────────────
 LOGIN_URL = '/'

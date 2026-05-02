@@ -53,61 +53,61 @@ def generate_serial(part_number: str, line_no: str, shift: str) -> str:
 def root_view(request):
     if request.user.is_authenticated:
         return redirect('/dashboard')
-    return render(request, 'login.html', {'error': None})
+    return render(request, 'core/login.html', {'error': None})
 
 
 @login_required
 def dashboard_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'dashboard.html', {'user': user, 'active_page': 'dashboard'})
+    return render(request, 'core/dashboard.html', {'user': user, 'active_page': 'dashboard'})
 
 
 @login_required
 def laser_marking_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'laser_marking.html', {'user': user, 'active_page': 'laser'})
+    return render(request, 'core/laser_marking.html', {'user': user, 'active_page': 'laser'})
 
 
 @login_required
 def add_part_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'add_part.html', {'user': user, 'active_page': 'add_part'})
+    return render(request, 'core/add_part.html', {'user': user, 'active_page': 'add_part'})
 
 
 @login_required
 def traceability_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'traceability.html', {'user': user, 'active_page': 'trace'})
+    return render(request, 'core/traceability.html', {'user': user, 'active_page': 'trace'})
 
 
 @login_required
 def machine_overview_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'machine_overview.html', {'user': user, 'active_page': 'machine_overview'})
+    return render(request, 'core/machine_overview.html', {'user': user, 'active_page': 'machine_overview'})
 
 
 @login_required
 def shift_report_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'shift_report.html', {'user': user, 'active_page': 'shift'})
+    return render(request, 'core/shift_report.html', {'user': user, 'active_page': 'shift'})
 
 
 @login_required
 def production_log_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'production_log.html', {'user': user, 'active_page': 'production_log'})
+    return render(request, 'core/production_log.html', {'user': user, 'active_page': 'production_log'})
 
 
 @login_required
 def rotor_balancing_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'rotor_balancing.html', {'user': user, 'active_page': 'rotor_balancing'})
+    return render(request, 'core/rotor_balancing.html', {'user': user, 'active_page': 'rotor_balancing'})
 
 
 @login_required
 def stator_balancing_view(request):
     user = _user_ctx(request.user)
-    return render(request, 'stator_balancing.html', {'user': user, 'active_page': 'stator_balancing'})
+    return render(request, 'core/stator_balancing.html', {'user': user, 'active_page': 'stator_balancing'})
 
 
 def _user_ctx(user):
@@ -746,10 +746,10 @@ def api_stator_balancing_import(request):
             recorded_at = None
             if pd.notna(date_val):
                 try:
-                    dt = pd.to_datetime(date_val)
-                    if dt.tzinfo is None:
-                        dt = dt.tz_localize('UTC').astimezone(IST)
-                    recorded_at = dt.to_pydatetime()
+                    row_dt = pd.to_datetime(date_val)
+                    if row_dt.tzinfo is None:
+                        row_dt = row_dt.tz_localize('UTC').astimezone(IST)
+                    recorded_at = row_dt.to_pydatetime()
                 except Exception:
                     pass
 
