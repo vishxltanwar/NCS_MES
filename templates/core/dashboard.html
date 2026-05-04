@@ -52,32 +52,6 @@
     </div>
   </div>
 
-  <!-- Rotor Balancing Summary Card -->
-  <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:450ms] rounded-xl border border-white/80 bg-white/70 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex items-center p-6 gap-6 mb-5">
-    <div class="rounded-xl bg-blue-50 border border-blue-100 p-4 text-blue-600">
-      <span class="material-symbols-outlined text-3xl">balance</span>
-    </div>
-    <div class="flex-1">
-      <h3 class="font-bold text-slate-900 text-sm uppercase tracking-tight mb-1">Rotor Balancing — Today</h3>
-      <div class="flex gap-8 mt-2">
-        <div>
-          <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Imported</p>
-          <p class="text-2xl font-bold text-slate-900 font-mono mt-0.5" id="rotor-total">—</p>
-        </div>
-        <div>
-          <p class="text-[10px] font-bold text-green-600 uppercase tracking-widest">Passed</p>
-          <p class="text-2xl font-bold text-green-600 font-mono mt-0.5" id="rotor-pass">—</p>
-        </div>
-        <div>
-          <p class="text-[10px] font-bold text-red-600 uppercase tracking-widest">Failed</p>
-          <p class="text-2xl font-bold text-red-600 font-mono mt-0.5" id="rotor-fail">—</p>
-        </div>
-      </div>
-    </div>
-    <a href="/rotor-balancing" class="text-sm font-bold text-primary hover:underline flex items-center gap-1">
-      View Details <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
-    </a>
-  </div>
 
   <!-- Shift Progress -->
   <div class="opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:500ms] rounded-xl border border-white/80 bg-white/70 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden">
@@ -212,12 +186,6 @@ async function loadStats() {
   document.getElementById('kpi-marked').textContent = d.marked_today;
   document.getElementById('kpi-pending').textContent = d.pending_today;
   document.getElementById('kpi-total').textContent = d.total_all;
-  
-  if(document.getElementById('rotor-total')) {
-    document.getElementById('rotor-total').textContent = d.rotor_total;
-    document.getElementById('rotor-pass').textContent = d.rotor_pass;
-    document.getElementById('rotor-fail').textContent = d.rotor_fail;
-  }
 }
 
 async function loadSerials() {
@@ -225,7 +193,7 @@ async function loadSerials() {
   var serials = await res.json();
   var tbody = document.getElementById('serials-tbody');
   if (!serials.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-slate-400 text-xs">No parts recorded yet.</td></tr>';
+    tbody.innerHTML = '\x3Ctr>\x3Ctd colspan="8" class="px-6 py-8 text-center text-slate-400 text-xs">No parts recorded yet.\x3C/td>\x3C/tr>';
     return;
   }
   tbody.innerHTML = serials.slice(0, 20).map(function(s) {
@@ -241,17 +209,17 @@ async function loadSerials() {
       : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
       : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
       : 'bg-slate-100 text-slate-400';
-    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
-    return '<tr class="hover:bg-white/60 transition-colors">'
-      + '<td class="px-6 py-3"><span class="font-mono font-bold text-primary text-sm">' + s.serial_number + '</span></td>'
-      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>'
-      + '<td class="px-6 py-3 font-medium text-slate-600">' + s.line_no + '</td>'
-      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + s.shift + '</span></td>'
-      + '<td class="px-6 py-3">' + ptHtml + '</td>'
-      + '<td class="px-6 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status + '</span></td>'
-      + '<td class="px-6 py-3 text-right text-slate-400 text-xs font-medium whitespace-nowrap">' + ts + '</td>'
-      + '<td class="px-6 py-3 text-center"><button onclick="deleteSerial(' + s.id + ')" class="text-slate-400 hover:text-red-500 transition-colors" title="Delete Part"><span class="material-symbols-outlined text-[18px]">delete</span></button></td>'
-      + '</tr>';
+    var ptHtml = '\x3Cspan class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '\x3C/span>';
+    return '\x3Ctr class="hover:bg-white/60 transition-colors">'
+      + '\x3Ctd class="px-6 py-3">\x3Cspan class="font-mono font-bold text-primary text-sm">' + s.serial_number + '\x3C/span>\x3C/td>'
+      + '\x3Ctd class="px-6 py-3">\x3Cspan class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '\x3C/span>\x3C/td>'
+      + '\x3Ctd class="px-6 py-3 font-medium text-slate-600">' + s.line_no + '\x3C/td>'
+      + '\x3Ctd class="px-6 py-3">\x3Cspan class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + s.shift + '\x3C/span>\x3C/td>'
+      + '\x3Ctd class="px-6 py-3">' + ptHtml + '\x3C/td>'
+      + '\x3Ctd class="px-6 py-3">\x3Cspan class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full">\x3Cspan class="h-1.5 w-1.5 rounded-full ' + dotClass + '">\x3C/span>' + s.status + '\x3C/span>\x3C/td>'
+      + '\x3Ctd class="px-6 py-3 text-right text-slate-400 text-xs font-medium whitespace-nowrap">' + ts + '\x3C/td>'
+      + '\x3Ctd class="px-6 py-3 text-center">\x3Cbutton onclick="deleteSerial(\'' + s.id + '\')" class="text-slate-400 hover:text-red-500 transition-colors" title="Delete Part">\x3Cspan class="material-symbols-outlined text-[18px]">delete\x3C/span>\x3C/button>\x3C/td>'
+      + '\x3C/tr>';
   }).join('');
 }
 

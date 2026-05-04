@@ -150,36 +150,36 @@
         <nav class="flex flex-col flex-1 py-5 overflow-y-auto">
           <p class="px-6 mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Operations</p>
           <div class="space-y-0.5">
-            <a class="nav-link {% if active_page == 'dashboard' %}active-nav{% endif %}" href="/dashboard">
+            <a {% if active_page == 'dashboard' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/dashboard">
               <span class="material-symbols-outlined text-xl">dashboard</span> Overview
             </a>
-            <a class="nav-link {% if active_page == 'add_part' %}active-nav{% endif %}" href="/add-part">
+            <a {% if active_page == 'add_part' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/add-part">
               <span class="material-symbols-outlined text-xl">qr_code_2</span> Add Part
             </a>
-            <a class="nav-link {% if active_page == 'trace' %}active-nav{% endif %}" href="/traceability">
+            <a {% if active_page == 'trace' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/traceability">
               <span class="material-symbols-outlined text-xl">qr_code_scanner</span> Traceability
             </a>
-            <a class="nav-link {% if active_page == 'shift' %}active-nav{% endif %}" href="/shift-report">
+            <a {% if active_page == 'shift' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/shift-report">
               <span class="material-symbols-outlined text-xl">analytics</span> Shift Report
             </a>
-            <a class="nav-link {% if active_page == 'production_log' %}active-nav{% endif %}"
+            <a {% if active_page == 'production_log' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %}
               href="/production-log">
               <span class="material-symbols-outlined text-xl">insert_chart</span> Production Log
             </a>
           </div>
           <p class="px-6 mt-6 mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Machines Overview</p>
           <div class="space-y-0.5">
-            <a class="nav-link {% if active_page == 'machine_overview' %}active-nav{% endif %}"
+            <a {% if active_page == 'machine_overview' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %}
               href="/machine-overview">
               <span class="material-symbols-outlined text-xl">precision_manufacturing</span> Machine Overview
             </a>
-            <a class="nav-link {% if active_page == 'laser' %}active-nav{% endif %}" href="/laser-marking">
+            <a {% if active_page == 'laser' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/laser-marking">
               <span class="material-symbols-outlined text-xl">highlight</span> Laser Marking
             </a>
-            <a class="nav-link {% if active_page == 'rotor_balancing' %}active-nav{% endif %}" href="/rotor-balancing">
+            <a {% if active_page == 'rotor_balancing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-balancing">
               <span class="material-symbols-outlined text-xl">balance</span> Rotor Balancing
             </a>
-            <a class="nav-link {% if active_page == 'stator_balancing' %}active-nav{% endif %}" href="/stator-balancing">
+            <a {% if active_page == 'stator_balancing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-balancing">
               <span class="material-symbols-outlined text-xl">balance</span> Stator Balancing
             </a>
           </div>
