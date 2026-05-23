@@ -179,9 +179,8 @@
 
 {% block scripts %}
 async function loadStats() {
-  var res = await fetch('/api/stats');
-  if (!res.ok) return;
-  var d = await res.json();
+  const d = await API.fetchStats();
+  if (!d) return;
   document.getElementById('kpi-today').textContent = d.total_today;
   document.getElementById('kpi-marked').textContent = d.marked_today;
   document.getElementById('kpi-pending').textContent = d.pending_today;
@@ -189,55 +188,47 @@ async function loadStats() {
 }
 
 async function loadSerials() {
-  var res = await fetch('/api/serials');
-  var serials = await res.json();
-  var tbody = document.getElementById('serials-tbody');
-  if (!serials.length) {
-    tbody.innerHTML = '\x3Ctr>\x3Ctd colspan="8" class="px-6 py-8 text-center text-slate-400 text-xs">No parts recorded yet.\x3C/td>\x3C/tr>';
+  const serials = await API.fetchSerials();
+  const tbody = document.getElementById('serials-tbody');
+  if (!serials || !serials.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="px-6 py-8 text-center text-slate-400 text-xs">No parts recorded yet.</td></tr>';
     return;
   }
   tbody.innerHTML = serials.slice(0, 20).map(function(s) {
     var statusClass = s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100';
     var dotClass = s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500';
     var ts = '--';
-    if (s.created_at && s.created_at !== '\u2014') {
+    if (s.created_at && s.created_at !== '—') {
       ts = new Date(s.created_at).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).replace(',', '');
     }
-    var data = s || {};
-    var ptLabel = s.part_type || data.part_type || 'N/A';
+    var ptLabel = s.part_type || 'N/A';
     var ptClass = ptLabel === 'Rotor' ? 'bg-blue-50 text-blue-700'
       : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
       : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
       : 'bg-slate-100 text-slate-400';
-    var ptHtml = '\x3Cspan class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '\x3C/span>';
-    return '\x3Ctr class="hover:bg-white/60 transition-colors">'
-      + '\x3Ctd class="px-6 py-3">\x3Cspan class="font-mono font-bold text-primary text-sm">' + s.serial_number + '\x3C/span>\x3C/td>'
-      + '\x3Ctd class="px-6 py-3">\x3Cspan class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '\x3C/span>\x3C/td>'
-      + '\x3Ctd class="px-6 py-3 font-medium text-slate-600">' + s.line_no + '\x3C/td>'
-      + '\x3Ctd class="px-6 py-3">\x3Cspan class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + s.shift + '\x3C/span>\x3C/td>'
-      + '\x3Ctd class="px-6 py-3">' + ptHtml + '\x3C/td>'
-      + '\x3Ctd class="px-6 py-3">\x3Cspan class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full">\x3Cspan class="h-1.5 w-1.5 rounded-full ' + dotClass + '">\x3C/span>' + s.status + '\x3C/span>\x3C/td>'
-      + '\x3Ctd class="px-6 py-3 text-right text-slate-400 text-xs font-medium whitespace-nowrap">' + ts + '\x3C/td>'
-      + '\x3Ctd class="px-6 py-3 text-center">\x3Cbutton onclick="deleteSerial(\'' + s.id + '\')" class="text-slate-400 hover:text-red-500 transition-colors" title="Delete Part">\x3Cspan class="material-symbols-outlined text-[18px]">delete\x3C/span>\x3C/button>\x3C/td>'
-      + '\x3C/tr>';
+    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+    return '<tr class="hover:bg-white/60 transition-colors">'
+      + '<td class="px-6 py-3"><span class="font-mono font-bold text-primary text-sm">' + s.serial_number + '</span></td>'
+      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>'
+      + '<td class="px-6 py-3 font-medium text-slate-600">' + s.line_no + '</td>'
+      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + s.shift + '</span></td>'
+      + '<td class="px-6 py-3">' + ptHtml + '</td>'
+      + '<td class="px-6 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status + '</span></td>'
+      + '<td class="px-6 py-3 text-right text-slate-400 text-xs font-medium whitespace-nowrap">' + ts + '</td>'
+      + '<td class="px-6 py-3 text-center"><button onclick="deleteSerial(' + s.id + ')" class="text-slate-400 hover:text-red-500 transition-colors" title="Delete Part"><span class="material-symbols-outlined text-[18px]">delete</span></button></td>'
+      + '</tr>';
   }).join('');
 }
 
 async function deleteSerial(id) {
-  if (!confirm('Are you sure you want to delete this part?')) return;
-  try {
-    var res = await fetch('/api/serials/' + id, {method: 'DELETE'});
-    if (res.ok) {
-      if (typeof showToast !== 'undefined') showToast('Part deleted successfully', 'success');
-      loadSerials();
-      loadStats();
-      loadShiftProgress();
-    } else {
-      if (typeof showToast !== 'undefined') showToast('Failed to delete part', 'error');
-    }
-  } catch (e) {
-    console.error(e);
-    if (typeof showToast !== 'undefined') showToast('Error deleting part', 'error');
+  const success = await API.deleteSerial(id);
+  if (success) {
+    showToast('Part deleted successfully', 'success');
+    loadSerials();
+    loadStats();
+    loadShiftProgress();
+  } else {
+    showToast('Failed to delete part', 'error');
   }
 }
 

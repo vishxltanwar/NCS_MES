@@ -47,8 +47,13 @@ def generate_serial(part_number: str, line_no: str, shift: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PAGE VIEWS (session-auth)
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Page View Helpers ─────────────────────────────────────────────────────────
+
+def _render_page(request, template_name, active_page):
+    user = _user_ctx(request.user)
+    return render(request, f'core/{template_name}', {'user': user, 'active_page': active_page})
+
+# ── Page Views ────────────────────────────────────────────────────────────────
 
 def root_view(request):
     if request.user.is_authenticated:
@@ -58,56 +63,47 @@ def root_view(request):
 
 @login_required
 def dashboard_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/dashboard.html', {'user': user, 'active_page': 'dashboard'})
+    return _render_page(request, 'dashboard.html', 'dashboard')
 
 
 @login_required
 def laser_marking_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/laser_marking.html', {'user': user, 'active_page': 'laser'})
+    return _render_page(request, 'laser_marking.html', 'laser')
 
 
 @login_required
 def add_part_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/add_part.html', {'user': user, 'active_page': 'add_part'})
+    return _render_page(request, 'add_part.html', 'add_part')
 
 
 @login_required
 def traceability_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/traceability.html', {'user': user, 'active_page': 'trace'})
+    return _render_page(request, 'traceability.html', 'trace')
 
 
 @login_required
 def machine_overview_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/machine_overview.html', {'user': user, 'active_page': 'machine_overview'})
+    return _render_page(request, 'machine_overview.html', 'machine_overview')
 
 
 @login_required
 def shift_report_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/shift_report.html', {'user': user, 'active_page': 'shift'})
+    return _render_page(request, 'shift_report.html', 'shift')
 
 
 @login_required
 def production_log_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/production_log.html', {'user': user, 'active_page': 'production_log'})
+    return _render_page(request, 'production_log.html', 'production_log')
 
 
 @login_required
 def rotor_balancing_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/rotor_balancing.html', {'user': user, 'active_page': 'rotor_balancing'})
+    return _render_page(request, 'rotor_balancing.html', 'rotor_balancing')
 
 
 @login_required
 def stator_balancing_view(request):
-    user = _user_ctx(request.user)
-    return render(request, 'core/stator_balancing.html', {'user': user, 'active_page': 'stator_balancing'})
+    return _render_page(request, 'stator_balancing.html', 'stator_balancing')
 
 
 def _user_ctx(user):
@@ -610,6 +606,14 @@ def api_rotor_balancing_import(request):
         imported = 0
         skipped = 0
         
+        def safe_int(val):
+            try: return int(float(val)) if val is not None else None
+            except: return None
+            
+        def safe_float(val):
+            try: return float(val) if val is not None else None
+            except: return None
+
         for row in sheet.iter_rows(min_row=2, values_only=True):
             if not row: continue
             sn_val = row[col_indices['Rotor-Ident']]
@@ -644,16 +648,6 @@ def api_rotor_balancing_import(request):
             except Exception:
                 pass
 
-            def safe_int(idx):
-                v = row[col_indices[idx]]
-                try: return int(float(v)) if v is not None else None
-                except: return None
-                
-            def safe_float(idx):
-                v = row[col_indices[idx]]
-                try: return float(v) if v is not None else None
-                except: return None
-
             final_res = 'Pass' if result_val == 'Y' else 'Fail'
 
             if RotorBalancing.objects.filter(serial_number=serial_num).exists():
@@ -664,13 +658,13 @@ def api_rotor_balancing_import(request):
                     result=final_res,
                     rotor_type=rotor_type_val,
                     recorded_at=recorded_at,
-                    measure_run=safe_int('Mea-Run'),
-                    balancing_run=safe_int('Bal-Run'),
-                    rpm=safe_int('RpM'),
-                    plane1_weight=safe_float('PL1[G_MM]'),
-                    plane1_degree=safe_float('PL1[DEG]'),
-                    plane2_weight=safe_float('PL2[G_MM]'),
-                    plane2_degree=safe_float('PL2[DEG]')
+                    measure_run=safe_int(row[col_indices['Mea-Run']]),
+                    balancing_run=safe_int(row[col_indices['Bal-Run']]),
+                    rpm=safe_int(row[col_indices['RpM']]),
+                    plane1_weight=safe_float(row[col_indices['PL1[G_MM]']]),
+                    plane1_degree=safe_float(row[col_indices['PL1[DEG]']]),
+                    plane2_weight=safe_float(row[col_indices['PL2[G_MM]']]),
+                    plane2_degree=safe_float(row[col_indices['PL2[DEG]']])
                 )
                 imported += 1
                 

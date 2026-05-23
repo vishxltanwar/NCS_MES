@@ -432,12 +432,8 @@ function clearLog() {
 }
 
 async function markDone(serial) {
-  var res = await fetch('/api/mark-done', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serial: serial })
-  });
-  if (res.ok) {
+  const data = await API.markDone(serial);
+  if (data && data.status === 'Marked') {
     showToast('Marked as done: ' + serial, 'success');
     loadSerials();
     loadStats();
@@ -445,10 +441,9 @@ async function markDone(serial) {
 }
 
 async function loadSerials() {
-  var res = await fetch('/api/serials');
-  var serials = await res.json();
-  var today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-  var todaySerials = serials.filter(function(s) {
+  const serials = await API.fetchSerials();
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const todaySerials = serials.filter(function(s) {
     if (!s.created_at || s.created_at === '--') return false;
     var istDate = new Date(s.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     return istDate === today;
@@ -489,8 +484,8 @@ async function loadSerials() {
 }
 
 async function loadStats() {
-  var res = await fetch('/api/stats');
-  var d = await res.json();
+  const d = await API.fetchStats();
+  if (!d) return;
   document.getElementById('kpi-today').textContent = d.total_today;
   document.getElementById('kpi-pending').textContent = d.pending_today;
 }

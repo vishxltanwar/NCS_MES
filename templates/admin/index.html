@@ -1,0 +1,114 @@
+{% extends "admin/base.html" %}
+{% load i18n static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  <span style="margin: 0 8px; opacity: 0.5;">/</span>
+  Administration Console
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <!-- PROBLEM 5: Page title area matched to MES "Production Overview" -->
+  <div class="mb-12">
+    <h2 class="text-2xl font-bold text-slate-900 tracking-tight">System Administration</h2>
+    <p class="text-sm text-slate-500 mt-1">Manage users, parts, and production records — Napino MES Console</p>
+  </div>
+
+  {% if app_list %}
+    <!-- PROBLEM 4: Content cards matched to MES Dashboard cards -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-10">
+    {% for app in app_list %}
+      <div class="module transition-all duration-300 hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1">
+        <table class="w-full">
+          <caption>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="p-2 bg-primary/10 text-primary rounded-lg">
+                  <span class="material-symbols-outlined text-xl">settings_applications</span>
+                </div>
+                <a href="{{ app.app_url }}" class="section font-bold tracking-tight text-slate-900" title="{% blocktranslate with name=app.name %}Models in the {{ name }} application{% endblocktranslate %}">{{ app.name }}</a>
+              </div>
+            </div>
+          </caption>
+          {% for model in app.models %}
+            <tr class="model-{{ model.object_name|lower }}">
+              {% if model.admin_url %}
+                <th scope="row" class="px-8 py-5">
+                  <a href="{{ model.admin_url }}" class="font-bold text-slate-900 hover:text-primary transition-colors">{{ model.name }}</a>
+                </th>
+              {% else %}
+                <th scope="row" class="px-8 py-5">{{ model.name }}</th>
+              {% endif %}
+
+              <td class="px-8 py-5 text-right">
+                <div class="flex items-center justify-end gap-5">
+                  {% if model.add_url %}
+                    <a href="{{ model.add_url }}" class="addlink flex items-center gap-1 text-xs font-bold text-emerald-600 hover:bg-emerald-50 px-4 py-2 rounded-lg transition-all">
+                      <span class="material-symbols-outlined text-sm">add_circle</span> Add
+                    </a>
+                  {% endif %}
+                  {% if model.admin_url %}
+                    {% if model.view_only %}
+                      <a href="{{ model.admin_url }}" class="viewlink flex items-center gap-1 text-xs font-bold text-slate-500 hover:bg-slate-100 px-4 py-2 rounded-lg transition-all">
+                        <span class="material-symbols-outlined text-sm">visibility</span> View
+                      </a>
+                    {% else %}
+                      <a href="{{ model.admin_url }}" class="changelink flex items-center gap-1 text-xs font-bold text-primary hover:bg-indigo-50 px-4 py-2 rounded-lg transition-all">
+                        <span class="material-symbols-outlined text-sm">edit</span> Change
+                      </a>
+                    {% endif %}
+                  {% endif %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    {% endfor %}
+    </div>
+  {% else %}
+    <p>{% translate "You don't have permission to view or edit anything." %}</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block sidebar %}
+<div id="content-related" class="mt-12 space-y-8">
+    <div class="module p-8">
+        <h2 class="mb-6 font-bold text-slate-900 text-sm tracking-tight flex items-center gap-2">
+             <span class="material-symbols-outlined text-primary">history</span> Recent Actions
+        </h2>
+        <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-6 border-b border-f1f5f9 pb-2">My activity log</p>
+        <div class="space-y-5">
+            {% load log %}
+            {% get_admin_log 10 as admin_log for_user user %}
+            {% if not admin_log %}
+                <p class="text-xs text-slate-400 italic">No recent activity detected.</p>
+            {% else %}
+                <ul class="actionlist space-y-4">
+                {% for entry in admin_log %}
+                    <li class="flex items-start gap-4">
+                        <span class="material-symbols-outlined text-base mt-0.5 {% if entry.is_addition %}text-emerald-500{% elif entry.is_change %}text-primary{% else %}text-red-500{% endif %}">
+                            {% if entry.is_addition %}add_circle{% elif entry.is_change %}edit_square{% else %}delete{% endif %}
+                        </span>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs font-bold text-slate-900 truncate">
+                                {% if entry.is_deletion or not entry.get_admin_url %}
+                                    {{ entry.object_repr }}
+                                {% else %}
+                                    <a href="{{ entry.get_admin_url }}" class="hover:text-primary transition-colors">{{ entry.object_repr }}</a>
+                                {% endif %}
+                            </p>
+                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">{{ entry.content_type|capfirst }}</p>
+                        </div>
+                    </li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

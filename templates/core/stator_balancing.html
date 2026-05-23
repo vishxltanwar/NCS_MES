@@ -101,15 +101,10 @@
 let allRecords = [];
 
 async function loadRecords() {
-  try {
-    const res = await fetch('/api/stator-balancing/');
-    const data = await res.json();
-    allRecords = data;
-    renderTable(data);
-    updateKPIs(data);
-  } catch (err) {
-    showToast('Failed to load records', 'error');
-  }
+  const data = await API.fetchBalancingRecords('stator');
+  allRecords = data;
+  renderTable(data);
+  updateKPIs(data);
 }
 
 function updateKPIs(data) {
@@ -180,53 +175,22 @@ async function handleExcelUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
   
-  const btn = document.getElementById('import-btn');
-  const orgHtml = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg">progress_activity</span> Importing...';
+  const { ok, data } = await API.importBalancingFile('stator', file, 'import-btn');
   
-  const formData = new FormData();
-  formData.append('file', file);
-  
-  try {
-    const res = await fetch('/api/stator-balancing/import/', {
-      method: 'POST',
-      body: formData
-    });
-    
-    const data = await res.json();
-    
-    if (res.ok) {
-      showToast(data.detail || 'Import successful', 'success');
-      loadRecords();
-    } else {
-      showToast(data.detail || 'Import failed', 'error');
-    }
-  } catch (err) {
-    showToast('Failed to connect to server', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = orgHtml;
-    event.target.value = ''; // Reset input
+  if (ok) {
+    showToast(data.detail || 'Import successful', 'success');
+    loadRecords();
+  } else {
+    showToast(data.detail || 'Import failed', 'error');
   }
+  event.target.value = ''; // Reset input
 }
 
 async function deleteRecord(id) {
-    if(!confirm("Are you sure you want to delete this record?")) return;
-    
-    try {
-        const res = await fetch('/api/stator-balancing/' + id + '/', {
-            method: 'DELETE'
-        });
-        if (res.ok) {
-            showToast('Record deleted successfully', 'success');
-            loadRecords(); // Refresh table
-        } else {
-            showToast('Failed to delete record', 'error');
-        }
-    } catch(e) {
-        showToast('Error deleting record', 'error');
-    }
+  if (await API.deleteBalancingRecord('stator', id)) {
+    showToast('Record deleted successfully', 'success');
+    loadRecords();
+  }
 }
 
 // Initial load

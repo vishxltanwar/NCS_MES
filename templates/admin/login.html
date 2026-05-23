@@ -1,0 +1,104 @@
+{% load i18n static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Login | NCS MES ADMIN</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&display=swap" rel="stylesheet" />
+  
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: { "primary": "#635BFF", "bg-light": "#f8fafc" },
+          fontFamily: { "display": ["Space Grotesk", "sans-serif"] },
+          borderRadius: { "DEFAULT": "1rem", "lg": "2rem", "xl": "3rem" },
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    .glass-card { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.5); }
+    @keyframes logoReveal { 0% { opacity: 0; transform: scale(0.85) translateY(40px); filter: blur(12px); } 100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); } }
+    @keyframes progress { 0% { width: 0%; } 100% { width: 100%; } }
+  </style>
+</head>
+
+<body class="bg-slate-50 font-display text-slate-900 min-h-screen flex items-center justify-center overflow-hidden">
+
+  <!-- Ambient Background -->
+  <div class="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+    <div class="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary/10 rounded-full blur-[120px]"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-primary/5 rounded-full blur-[120px]"></div>
+  </div>
+
+  <!-- SPLASH SCREEN (Shortened for Admin) -->
+  <div id="splash-screen" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white transition-all duration-700 ease-in-out">
+    <div class="relative w-64 mb-8 animate-[logoReveal_1s_ease-out_forwards]">
+        <img src="{% static 'images/ncs_logo.png' %}" alt="NCS Logo" class="w-full h-auto">
+    </div>
+    <div class="w-48 h-1 bg-slate-100 rounded-full overflow-hidden">
+        <div class="h-full bg-primary w-0 animate-[progress_1.5s_ease-in-out_forwards]"></div>
+    </div>
+  </div>
+
+  <!-- LOGIN CONTENT -->
+  <div class="relative z-10 w-full max-w-[420px] p-6 flex flex-col items-center">
+    <div class="mb-10 flex flex-col items-center text-center w-full">
+      <img src="{% static 'images/ncs_logo.png' %}" alt="NCS Logo" class="w-32 mb-2 block mx-auto">
+      <p class="text-slate-700 text-[11px] font-black uppercase tracking-[0.15em] mt-2">ADMINISTRATION CONSOLE</p>
+    </div>
+
+    <div class="glass-card w-full rounded-2xl p-8 shadow-[0_20px_50px_rgba(0,0,0,0.05)] border border-white">
+      <h2 class="text-2xl font-black text-slate-900 mb-1">Sign in</h2>
+      <p class="text-slate-500 font-medium text-sm mb-6">Enter administrative credentials</p>
+
+      {% if form.errors %}
+        <div class="mb-6 flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-xs font-bold">
+            <span class="material-symbols-outlined text-lg">error</span>
+            {% translate "Invalid username or password." %}
+        </div>
+      {% endif %}
+
+      <form action="{{ app_path }}" method="post" id="login-form">{% csrf_token %}
+        <div class="space-y-4">
+          <div class="space-y-1.5">
+            <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Username</label>
+            <input type="text" name="username" required
+              class="block w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-bold text-sm" />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Password</label>
+            <input type="password" name="password" required
+              class="block w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-bold text-sm" />
+          </div>
+          <button type="submit"
+            class="w-full mt-4 py-4 bg-primary text-white font-bold rounded-xl shadow-lg shadow-primary/30 hover:shadow-xl hover:-translate-y-0.5 active:scale-95 transition-all flex items-center justify-center gap-2">
+            <span>Sign In</span>
+          </button>
+        </div>
+      </form>
+    </div>
+    
+    <div class="mt-8 flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+        <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Security Policy Active</span>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const splash = document.getElementById('splash-screen');
+        splash.style.opacity = '0';
+        splash.style.pointerEvents = 'none';
+        setTimeout(() => splash.remove(), 700);
+      }, 1800);
+    });
+  </script>
+</body>
+</html>

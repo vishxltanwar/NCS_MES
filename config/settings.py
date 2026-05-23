@@ -117,3 +117,8 @@ SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 
 # ── Login redirect ────────────────────────────────────────────────────────────
 LOGIN_URL = '/'
+
+# ── Django Admin Customization ───────────────────────────────────────────────
+ADMIN_SITE_HEADER = 'NCS MES ADMIN'
+ADMIN_SITE_TITLE  = 'NCS MES ADMIN'
+ADMIN_INDEX_TITLE = 'Administration Console'
