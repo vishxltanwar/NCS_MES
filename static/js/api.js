@@ -52,10 +52,11 @@ const API = {
 
     async fetchBalancingRecords(type) {
         try {
-            const res = await fetch(`/api/${type}-balancing/`);
+            const endpoint = type === 'stator' ? 'stator-testing' : `${type}-balancing`;
+            const res = await fetch(`/api/${endpoint}/`);
             return await res.json();
         } catch (err) {
-            console.error(`Error fetching ${type} balancing records:`, err);
+            console.error(`Error fetching ${type} records:`, err);
             return [];
         }
     },
@@ -63,10 +64,11 @@ const API = {
     async deleteBalancingRecord(type, id) {
         if (!confirm("Are you sure you want to delete this record?")) return false;
         try {
-            const res = await fetch(`/api/${type}-balancing/${id}/`, { method: 'DELETE' });
+            const endpoint = type === 'stator' ? 'stator-testing' : `${type}-balancing`;
+            const res = await fetch(`/api/${endpoint}/${id}/`, { method: 'DELETE' });
             return res.ok;
         } catch (err) {
-            console.error(`Error deleting ${type} balancing record:`, err);
+            console.error(`Error deleting ${type} record:`, err);
             return false;
         }
     },
@@ -76,14 +78,15 @@ const API = {
         formData.append('file', file);
         UI.setLoading(btnId, true);
         try {
-            const res = await fetch(`/api/${type}-balancing/import/`, {
+            const endpoint = type === 'stator' ? 'stator-testing' : `${type}-balancing`;
+            const res = await fetch(`/api/${endpoint}/import/`, {
                 method: 'POST',
                 body: formData
             });
             const data = await res.json();
             return { ok: res.ok, data };
         } catch (err) {
-            console.error(`Error importing ${type} balancing file:`, err);
+            console.error(`Error importing ${type} file:`, err);
             return { ok: false, data: { detail: 'Connection failed' } };
         } finally {
             UI.setLoading(btnId, false);

@@ -12,7 +12,7 @@ import openpyxl
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
-from .models import Serial, Part, RotorBalancing, StatorBalancingRecord
+from .models import Serial, Part, RotorBalancing, StatorTestingRecord
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -102,8 +102,8 @@ def rotor_balancing_view(request):
 
 
 @login_required
-def stator_balancing_view(request):
-    return _render_page(request, 'stator_balancing.html', 'stator_balancing')
+def stator_testing_view(request):
+    return _render_page(request, 'stator_testing.html', 'stator_testing')
 
 
 def _user_ctx(user):
@@ -255,7 +255,7 @@ def api_stats(request):
     rotor_pass = rotor_today_objs.filter(result='Pass').count()
     rotor_fail = rotor_today_objs.filter(result='Fail').count()
     
-    stator_today_objs = StatorBalancingRecord.objects.filter(imported_at__date=today)
+    stator_today_objs = StatorTestingRecord.objects.filter(imported_at__date=today)
     stator_total = stator_today_objs.count()
     stator_pass = stator_today_objs.filter(final_result__iexact='Pass').count()
     stator_fail = stator_today_objs.filter(final_result__iexact='Fail').count()
@@ -315,16 +315,41 @@ def api_traceability_search(request):
             'imported_at': rotor.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if rotor.imported_at else '',
         }
         
-    # Stator Balancing
-    stator = StatorBalancingRecord.objects.filter(serial_number__iexact=serial).first()
+    # Stator Testing
+    stator = StatorTestingRecord.objects.filter(serial_number__iexact=serial).first()
     if stator:
-        response_data['stator_balancing'] = {
+        response_data['stator_testing'] = {
             'id': stator.id,
             'serial_number': stator.serial_number,
             'final_result': stator.final_result,
-            'ry': stator.ry or '',
-            'ry_result': stator.ry_result or '',
-            'surge_voltage': stator.surge_voltage or '',
+            'operator': stator.operator,
+            'code_number': stator.code_number,
+            'symmetry': stator.symmetry,
+            'ry': stator.ry,
+            'ry_result': stator.ry_result,
+            'yb': stator.yb,
+            'yb_result': stator.yb_result,
+            'br': stator.br,
+            'br_result': stator.br_result,
+            'thd_win': stator.thd_win,
+            'thd_result': stator.thd_result,
+            'ir_m_ohms': stator.ir_m_ohms,
+            'ir_result': stator.ir_result,
+            'high_voltage': stator.high_voltage,
+            'hv_result': stator.hv_result,
+            'surge_voltage': stator.surge_voltage,
+            'surge_main_ry_error': stator.surge_main_ry_error,
+            'surge_ry_result': stator.surge_ry_result,
+            'surge_aux_yb_error': stator.surge_aux_yb_error,
+            'surge_aux_yb_result': stator.surge_aux_yb_result,
+            'surge_main_aux_br_error': stator.surge_main_aux_br_error,
+            'surge_main_aux_br_result': stator.surge_main_aux_br_result,
+            'inductance_1': stator.inductance_1,
+            'l1_result': stator.l1_result,
+            'inductance_2': stator.inductance_2,
+            'l2_result': stator.l2_result,
+            'inductance_3': stator.inductance_3,
+            'l3_result': stator.l3_result,
             'recorded_at': stator.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if stator.recorded_at else '',
             'imported_at': stator.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if stator.imported_at else '',
         }
@@ -707,70 +732,181 @@ def api_rotor_balancing_delete(request, pk):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STATOR BALANCING API
+# STATOR TESTING API
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_view(['POST'])
-def api_stator_balancing_import(request):
+def api_stator_testing_import(request):
     file_obj = request.FILES.get('file')
     if not file_obj:
         return Response({'detail': 'No file uploaded'}, status=400)
 
     try:
+        # 1. Try reading as TSV (handles cases where .xls is actually TSV)
+        file_obj.seek(0)
         df = pd.read_csv(file_obj, sep='\t')
+        # If it's a binary file, read_csv might return a single column of garbage.
+        # We check column count to ensure it's a valid TSV.
+        if len(df.columns) <= 1:
+            raise Exception("Not a valid TSV")
+    except Exception:
+        try:
+            # 2. Fallback to Excel (xlrd engine for .xls as requested)
+            file_obj.seek(0)
+            df = pd.read_excel(file_obj, engine='xlrd')
+        except Exception:
+            try:
+                # Final attempt for .xlsx or other Excel formats
+                file_obj.seek(0)
+                df = pd.read_excel(file_obj)
+            except Exception:
+                # 3. Both failed
+                return Response({'detail': "Could not parse file. Please upload a valid TSV or Excel file."}, status=400)
+
+    try:
+        # 2. Normalize Column Names (strip whitespace and uppercase for matching)
+        df.columns = [str(c).strip().upper() for c in df.columns]
         
-        req_cols = ['BAR CODE', 'DATE', 'FINAL RESULT', 'R/Y', 'R/Y RESULT', 'SURGE VOLTAGE']
-        missing = [c for c in req_cols if c not in df.columns]
+        # Mapping of expected columns to data frame columns
+        col_map = {}
+        
+        # Fuzzy matching for required columns
+        required_logic = {
+            'BAR CODE': ['BAR CODE', 'BARCODE', 'SERIAL NUMBER', 'SERIAL', 'SN', 'BAR_CODE'],
+            'DATE': ['DATE', 'DATETIME', 'TIME', 'TIMESTAMP', 'RECORDED_AT', 'RECORDED AT'],
+            'FINAL RESULT': ['FINAL RESULT', 'FINAL_RESULT', 'RESULT', 'STATUS', 'RESLUT']
+        }
+        
+        for key, alternates in required_logic.items():
+            for alt in alternates:
+                if alt in df.columns:
+                    col_map[key] = alt
+                    break
+        
+        missing = [k for k in required_logic.keys() if k not in col_map]
         if missing:
-            return Response({'detail': f'Missing expected columns: {", ".join(missing)}'}, status=400)
+            return Response({
+                'detail': f'Missing required columns: {", ".join(missing)}.',
+                'found': list(df.columns[:10]),
+                'help': 'Please ensure your file has headers like "BAR CODE", "DATE", and "FINAL RESULT".'
+            }, status=400)
+
+        # Optional columns mapping
+        optional_logic = {
+            'OPERATOR': ['OPERATOR', 'USER', 'NAME'],
+            'CODE NUMBER': ['CODE NUMBER', 'PART NUMBER', 'PART NO', 'CODE'],
+            '%SYMMETRY': ['%SYMMETRY', 'SYMMETRY', 'SYM'],
+            'R/Y': ['R/Y', 'RY', 'R-Y'],
+            'R/Y RESULT': ['R/Y RESULT', 'RY RESULT', 'RY_RESULT'],
+            'Y/B': ['Y/B', 'YB', 'Y-B'],
+            'Y/B RESULT': ['Y/B RESULT', 'YB RESULT', 'YB_RESULT'],
+            'B/R': ['B/R', 'BR', 'B-R'],
+            'B/R RESULT': ['B/R RESULT', 'BR RESULT', 'BR_RESULT'],
+            'THD WIN': ['THD WIN', 'THD'],
+            'THD RESULT': ['THD RESULT', 'THD_RESULT'],
+            'IR (M OHMS)': ['IR (M OHMS)', 'IR', 'INSULATION RESISTANCE'],
+            'IR RESULT': ['IR RESULT', 'IR_RESULT'],
+            'HIGH VOLTAGE': ['HIGH VOLTAGE', 'HV', 'HIPOT'],
+            'HIGH VOLTAGE RESULT': ['HIGH VOLTAGE RESULT', 'HV RESULT', 'HV_RESULT', 'HIPOT RESULT'],
+            'SURGE VOLTAGE': ['SURGE VOLTAGE', 'SURGE'],
+            'SURGE R/Y RESULT': ['SURGE R/Y RESULT', 'SURGE RY RESULT', 'SURGE_RY_RESULT'],
+            'SURGE AUX (Y/B) RESULT': ['SURGE AUX (Y/B) RESULT', 'SURGE YB RESULT', 'SURGE_YB_RESULT'],
+            'SURGE MAIN-AUX (B/R) RESULT': ['SURGE MAIN-AUX (B/R) RESULT', 'SURGE BR RESULT', 'SURGE_BR_RESULT'],
+            'INDUCTANCE-1': ['INDUCTANCE-1', 'L1', 'IND-1'],
+            'INDUCTANCE-1 RESULT': ['INDUCTANCE-1 RESULT', 'L1 RESULT', 'L1_RESULT'],
+            'INDUCTANCE-2': ['INDUCTANCE-2', 'L2', 'IND-2'],
+            'INDUCTANCE-2 RESULT': ['INDUCTANCE-2 RESULT', 'L2 RESULT', 'L2_RESULT'],
+            'INDUCTANCE-3': ['INDUCTANCE-3', 'L3', 'IND-3'],
+            'INDUCTANCE-3 RESULT': ['INDUCTANCE-3 RESULT', 'L3 RESULT', 'L3_RESULT'],
+        }
+        
+        for key, alternates in optional_logic.items():
+            for alt in alternates:
+                if alt in df.columns:
+                    col_map[key] = alt
+                    break
 
         imported = 0
         skipped = 0
 
+        def get_val(row, key):
+            col_name = col_map.get(key)
+            if col_name and col_name in row:
+                val = row[col_name]
+                if pd.isna(val): return None
+                return str(val).strip()
+            return None
+
         for index, row in df.iterrows():
-            sn_val = str(row['BAR CODE']).strip()
-            if not sn_val or sn_val == 'nan': 
+            sn_val = get_val(row, 'BAR CODE')
+            if not sn_val or sn_val.lower() == 'nan': 
                 continue
                 
-            if StatorBalancingRecord.objects.filter(serial_number=sn_val).exists():
+            if StatorTestingRecord.objects.filter(serial_number=sn_val).exists():
                 skipped += 1
                 continue
 
-            date_val = row['DATE']
+            date_val = get_val(row, 'DATE')
             recorded_at = None
-            if pd.notna(date_val):
+            if date_val:
                 try:
-                    row_dt = pd.to_datetime(date_val)
-                    if row_dt.tzinfo is None:
-                        row_dt = row_dt.tz_localize('UTC').astimezone(IST)
-                    recorded_at = row_dt.to_pydatetime()
+                    row_dt = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
+                    if pd.notna(row_dt):
+                        if row_dt.tzinfo is None:
+                            row_dt = row_dt.tz_localize('UTC').astimezone(IST)
+                        recorded_at = row_dt.to_pydatetime()
                 except Exception:
                     pass
 
-            ry_val = str(row['R/Y']).strip() if pd.notna(row['R/Y']) else ''
-            ry_result_val = str(row['R/Y RESULT']).strip() if pd.notna(row['R/Y RESULT']) else ''
-            surge_val = str(row['SURGE VOLTAGE']).strip() if pd.notna(row['SURGE VOLTAGE']) else ''
-            final_res = str(row['FINAL RESULT']).strip()
+            res_val = get_val(row, 'FINAL RESULT') or 'N/A'
+            if len(res_val) > 20: res_val = res_val[:20]
 
-            StatorBalancingRecord.objects.create(
+            StatorTestingRecord.objects.create(
                 serial_number=sn_val,
                 recorded_at=recorded_at,
-                final_result=final_res,
-                ry=ry_val,
-                ry_result=ry_result_val,
-                surge_voltage=surge_val
+                final_result=res_val,
+                operator=get_val(row, 'OPERATOR'),
+                code_number=get_val(row, 'CODE NUMBER'),
+                symmetry=get_val(row, '%SYMMETRY'),
+                ry=get_val(row, 'R/Y'),
+                ry_result=get_val(row, 'R/Y RESULT'),
+                yb=get_val(row, 'Y/B'),
+                yb_result=get_val(row, 'Y/B RESULT'),
+                br=get_val(row, 'B/R'),
+                br_result=get_val(row, 'B/R RESULT'),
+                thd_win=get_val(row, 'THD WIN'),
+                thd_result=get_val(row, 'THD RESULT'),
+                ir_m_ohms=get_val(row, 'IR (M OHMS)'),
+                ir_result=get_val(row, 'IR RESULT'),
+                high_voltage=get_val(row, 'HIGH VOLTAGE'),
+                hv_result=get_val(row, 'HIGH VOLTAGE RESULT'),
+                surge_voltage=get_val(row, 'SURGE VOLTAGE'),
+                surge_main_ry_error=get_val(row, 'SURGE MAIN (R/Y) - ERROR%'),
+                surge_ry_result=get_val(row, 'SURGE R/Y RESULT'),
+                surge_aux_yb_error=get_val(row, 'SURGE AUX (Y/B) - ERROR%'),
+                surge_aux_yb_result=get_val(row, 'SURGE AUX (Y/B) RESULT'),
+                surge_main_aux_br_error=get_val(row, 'SURGE MAIN-AUX (B/R) - ERROR%'),
+                surge_main_aux_br_result=get_val(row, 'SURGE MAIN-AUX (B/R) RESULT'),
+                inductance_1=get_val(row, 'INDUCTANCE-1'),
+                l1_result=get_val(row, 'INDUCTANCE-1 RESULT'),
+                inductance_2=get_val(row, 'INDUCTANCE-2'),
+                l2_result=get_val(row, 'INDUCTANCE-2 RESULT'),
+                inductance_3=get_val(row, 'INDUCTANCE-3'),
+                l3_result=get_val(row, 'INDUCTANCE-3 RESULT')
             )
             imported += 1
 
         return Response({'detail': f'{imported} records imported, {skipped} skipped (already existed).'})
 
     except Exception as e:
-        return Response({'detail': f'Error parsing TSV file: {str(e)}'}, status=500)
+        import traceback
+        print(traceback.format_exc())
+        return Response({'detail': f'Error parsing file: {str(e)}'}, status=500)
 
 
 @api_view(['GET'])
-def api_stator_balancing_list(request):
-    records = StatorBalancingRecord.objects.all().order_by('-imported_at')[:200]
+def api_stator_testing_list(request):
+    records = StatorTestingRecord.objects.all().order_by('-imported_at')[:200]
     data = []
     for r in records:
         data.append({
@@ -778,18 +914,43 @@ def api_stator_balancing_list(request):
             'serial_number': r.serial_number,
             'recorded_at': r.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.recorded_at else '',
             'final_result': r.final_result,
-            'ry': r.ry or '',
-            'ry_result': r.ry_result or '',
-            'surge_voltage': r.surge_voltage or '',
+            'operator': r.operator,
+            'code_number': r.code_number,
+            'symmetry': r.symmetry,
+            'ry': r.ry,
+            'ry_result': r.ry_result,
+            'yb': r.yb,
+            'yb_result': r.yb_result,
+            'br': r.br,
+            'br_result': r.br_result,
+            'thd_win': r.thd_win,
+            'thd_result': r.thd_result,
+            'ir_m_ohms': r.ir_m_ohms,
+            'ir_result': r.ir_result,
+            'high_voltage': r.high_voltage,
+            'hv_result': r.hv_result,
+            'surge_voltage': r.surge_voltage,
+            'surge_main_ry_error': r.surge_main_ry_error,
+            'surge_ry_result': r.surge_ry_result,
+            'surge_aux_yb_error': r.surge_aux_yb_error,
+            'surge_aux_yb_result': r.surge_aux_yb_result,
+            'surge_main_aux_br_error': r.surge_main_aux_br_error,
+            'surge_main_aux_br_result': r.surge_main_aux_br_result,
+            'inductance_1': r.inductance_1,
+            'l1_result': r.l1_result,
+            'inductance_2': r.inductance_2,
+            'l2_result': r.l2_result,
+            'inductance_3': r.inductance_3,
+            'l3_result': r.l3_result,
             'imported_at': r.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.imported_at else ''
         })
     return Response(data)
 
 @api_view(['DELETE'])
-def api_stator_balancing_delete(request, pk):
+def api_stator_testing_delete(request, pk):
     try:
-        record = StatorBalancingRecord.objects.get(pk=pk)
+        record = StatorTestingRecord.objects.get(pk=pk)
         record.delete()
         return Response({'success': True})
-    except StatorBalancingRecord.DoesNotExist:
+    except StatorTestingRecord.DoesNotExist:
         return Response({'success': False, 'error': 'Record not found'}, status=404)

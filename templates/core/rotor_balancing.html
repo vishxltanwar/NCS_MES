@@ -72,27 +72,17 @@
         <span class="material-symbols-outlined text-base">refresh</span> Load
       </button>
     </div>
-    <div class="overflow-x-auto" style="max-height:500px; overflow-y:auto;">
-      <table class="w-full text-left text-sm">
+    <div class="overflow-x-auto" style="max-height:600px; overflow-y:auto;">
+      <table class="w-full text-left text-sm border-separate border-spacing-0">
         <thead class="sticky top-0 bg-white z-10">
-          <tr class="bg-slate-50 border-b border-slate-100 whitespace-nowrap">
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Serial Number</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Rotor Type</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500">Result</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">Mea. Run</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">Bal. Run</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">RPM</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">PL1 [g mm]</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">PL1 [deg]</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">PL2 [g mm]</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-center">PL2 [deg]</th>
-            <th class="px-5 py-2.5 text-[11px] font-bold uppercase tracking-widest text-slate-500 text-right">Recorded At</th>
-            <th class="px-5 py-2.5 w-10"></th>
+          <tr class="bg-slate-50 border-b border-slate-200 whitespace-nowrap">
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Serial Number</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200 text-right">Status & Details</th>
           </tr>
         </thead>
-        <tbody id="records-tbody" class="divide-y divide-slate-50">
+        <tbody id="records-tbody" class="divide-y divide-slate-100">
           <tr>
-            <td colspan="12" class="px-5 py-6 text-center text-slate-400 text-xs">Loading records...</td>
+            <td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">Loading records...</td>
           </tr>
         </tbody>
       </table>
@@ -104,6 +94,7 @@
 
 {% block scripts %}
 let allRecords = [];
+let expandedRowId = null;
 
 async function loadRecords() {
   const data = await API.fetchBalancingRecords('rotor');
@@ -126,6 +117,15 @@ function updateKPIs(data) {
   document.getElementById('kpi-failed').textContent = failed;
 }
 
+function toggleRow(id) {
+  if (expandedRowId === id) {
+    expandedRowId = null;
+  } else {
+    expandedRowId = id;
+  }
+  renderTable(allRecords);
+}
+
 function renderTable(data) {
   const tbody = document.getElementById('records-tbody');
   const tableCount = document.getElementById('table-count');
@@ -133,40 +133,95 @@ function renderTable(data) {
   tableCount.textContent = `${data.length} records`;
   
   if (data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12" class="px-5 py-6 text-center text-slate-400 text-xs">No records available. Import an Excel file to see data.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">No records available. Import an Excel file to see data.</td></tr>';
     return;
   }
   
-  const html = data.map(r => {
+  const rows = [];
+  data.forEach(r => {
     const isPass = r.result === 'Pass';
     const bColor = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
     const dotColor = isPass ? 'bg-green-500' : 'bg-red-500';
+    const isExpanded = expandedRowId === r.id;
     
-    return '<tr class="hover:bg-slate-50 transition-colors whitespace-nowrap">' +
-      '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + r.serial_number + '</span></td>' +
-      '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold text-slate-600">' + (r.rotor_type || '-') + '</span></td>' +
-      '<td class="px-5 py-3">' +
-        '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + bColor + ' px-2 py-0.5 rounded-full">' +
-          '<span class="h-1.5 w-1.5 rounded-full ' + dotColor + '"></span>' + r.result +
-        '</span>' +
-      '</td>' +
-      '<td class="px-5 py-3 text-center text-xs font-medium text-slate-700">' + (r.measure_run || '-') + '</td>' +
-      '<td class="px-5 py-3 text-center text-xs font-medium text-slate-700">' + (r.balancing_run || '-') + '</td>' +
-      '<td class="px-5 py-3 text-center text-xs font-medium text-slate-700">' + (r.rpm || '-') + '</td>' +
-      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane1_weight !== '' ? r.plane1_weight : '-') + '</td>' +
-      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane1_degree !== '' ? r.plane1_degree : '-') + '</td>' +
-      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane2_weight !== '' ? r.plane2_weight : '-') + '</td>' +
-      '<td class="px-5 py-3 text-center text-xs font-mono font-medium text-slate-700">' + (r.plane2_degree !== '' ? r.plane2_degree : '-') + '</td>' +
-      '<td class="px-5 py-3 text-right text-xs text-slate-400">' + (r.recorded_at || r.imported_at) + '</td>' +
-      '<td class="px-5 py-3 text-center">' +
-          '<button onclick="deleteRecord(' + r.id + ')" class="text-slate-300 hover:text-red-500 transition-colors p-1" title="Delete">' +
-              '<span class="material-symbols-outlined text-[16px]">delete</span>' +
-          '</button>' +
-      '</td>' +
-    '</tr>';
-  }).join('');
+    // Main Row
+    rows.push(`
+      <tr class="hover:bg-[#F8F9FA] transition-all cursor-pointer ${isExpanded ? 'bg-[#F8F9FA]' : ''}" onclick="toggleRow(${r.id})">
+        <td class="px-5 py-3">
+          <span class="font-mono font-medium text-primary text-sm hover:underline decoration-1 underline-offset-4">
+            ${r.serial_number}
+          </span>
+        </td>
+        <td class="px-5 py-3">
+          <div class="flex items-center justify-end gap-3">
+            <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${bColor} px-2.5 py-1 rounded-full shadow-sm">
+              <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${r.result}
+            </span>
+            <span class="material-symbols-outlined text-slate-400 text-xl transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}">
+              expand_more
+            </span>
+          </div>
+        </td>
+      </tr>
+    `);
+
+    // Detail Row
+    if (isExpanded) {
+      rows.push(`
+        <tr>
+          <td colspan="2" class="p-0 border-t border-slate-100">
+            <div class="bg-[#F8F9FA] px-8 py-6">
+              <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-12 gap-y-6">
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Rotor Type</p>
+                  <p class="text-sm font-semibold text-slate-900">${r.rotor_type || '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mea. Run</p>
+                  <p class="text-sm font-semibold text-slate-900">${r.measure_run || '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Bal. Run</p>
+                  <p class="text-sm font-semibold text-slate-900">${r.balancing_run || '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">RPM</p>
+                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.rpm || '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL1 [G MM]</p>
+                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane1_weight !== '' && r.plane1_weight !== null ? r.plane1_weight : '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL1 [DEG]</p>
+                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane1_degree !== '' && r.plane1_degree !== null ? r.plane1_degree : '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL2 [G MM]</p>
+                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane2_weight !== '' && r.plane2_weight !== null ? r.plane2_weight : '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL2 [DEG]</p>
+                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane2_degree !== '' && r.plane2_degree !== null ? r.plane2_degree : '-'}</p>
+                </div>
+                <div class="space-y-1">
+                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recorded At</p>
+                  <p class="text-sm font-medium text-slate-500">${r.recorded_at || r.imported_at}</p>
+                </div>
+              </div>
+              <div class="mt-8 pt-4 border-t border-slate-200/60 flex justify-end">
+                <button onclick="event.stopPropagation(); deleteRecord(${r.id})" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100">
+                  <span class="material-symbols-outlined text-sm">delete</span> Delete Record
+                </button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      `);
+    }
+  });
   
-  tbody.innerHTML = html;
+  tbody.innerHTML = rows.join('');
 }
 
 async function handleExcelUpload(event) {

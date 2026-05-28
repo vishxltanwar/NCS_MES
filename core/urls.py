@@ -13,7 +13,7 @@ urlpatterns = [
     path('shift-report', views.shift_report_view, name='shift_report'),
     path('production-log', views.production_log_view, name='production_log'),
     path('rotor-balancing', views.rotor_balancing_view, name='rotor_balancing'),
-    path('stator-balancing', views.stator_balancing_view, name='stator_balancing'),
+    path('stator-testing', views.stator_testing_view, name='stator_testing'),
 
     # ── Auth API ──────────────────────────────────────────────────────────────
     path('api/login', views.api_login, name='api_login'),
@@ -43,8 +43,8 @@ urlpatterns = [
     path('api/rotor-balancing/', views.api_rotor_balancing_list, name='api_rotor_balancing_list'),
     path('api/rotor-balancing/<int:pk>/', views.api_rotor_balancing_delete, name='api_rotor_balancing_delete'),
 
-    # ── Stator Balancing API ───────────────────────────────────────────────────
-    path('api/stator-balancing/import/', views.api_stator_balancing_import, name='api_stator_balancing_import'),
-    path('api/stator-balancing/', views.api_stator_balancing_list, name='api_stator_balancing_list'),
-    path('api/stator-balancing/<int:pk>/', views.api_stator_balancing_delete, name='api_stator_balancing_delete'),
+    # ── Stator Testing API ───────────────────────────────────────────────────
+    path('api/stator-testing/import/', views.api_stator_testing_import, name='api_stator_testing_import'),
+    path('api/stator-testing/', views.api_stator_testing_list, name='api_stator_testing_list'),
+    path('api/stator-testing/<int:pk>/', views.api_stator_testing_delete, name='api_stator_testing_delete'),
 ]

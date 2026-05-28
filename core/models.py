@@ -58,17 +58,53 @@ class RotorBalancing(models.Model):
     def __str__(self):
         return f"{self.serial_number} - {self.result}"
 
-class StatorBalancingRecord(models.Model):
+class StatorTestingRecord(models.Model):
     serial_number = models.CharField(max_length=32, unique=True, db_index=True)
     recorded_at = models.DateTimeField(null=True, blank=True)
     final_result = models.CharField(max_length=20)
+    
+    # Meta
+    operator = models.CharField(max_length=100, null=True, blank=True)
+    code_number = models.CharField(max_length=100, null=True, blank=True)
+    symmetry = models.CharField(max_length=50, null=True, blank=True)
+    
+    # Resistance Tests
     ry = models.CharField(max_length=50, null=True, blank=True)
     ry_result = models.CharField(max_length=20, null=True, blank=True)
+    yb = models.CharField(max_length=50, null=True, blank=True)
+    yb_result = models.CharField(max_length=20, null=True, blank=True)
+    br = models.CharField(max_length=50, null=True, blank=True)
+    br_result = models.CharField(max_length=20, null=True, blank=True)
+    
+    # Electrical Tests
+    thd_win = models.CharField(max_length=50, null=True, blank=True)
+    thd_result = models.CharField(max_length=20, null=True, blank=True)
+    ir_m_ohms = models.CharField(max_length=50, null=True, blank=True)
+    ir_result = models.CharField(max_length=20, null=True, blank=True)
+    high_voltage = models.CharField(max_length=50, null=True, blank=True)
+    hv_result = models.CharField(max_length=20, null=True, blank=True)
+    
+    # Surge Tests
     surge_voltage = models.CharField(max_length=50, null=True, blank=True)
+    surge_main_ry_error = models.CharField(max_length=50, null=True, blank=True)
+    surge_ry_result = models.CharField(max_length=20, null=True, blank=True)
+    surge_aux_yb_error = models.CharField(max_length=50, null=True, blank=True)
+    surge_aux_yb_result = models.CharField(max_length=20, null=True, blank=True)
+    surge_main_aux_br_error = models.CharField(max_length=50, null=True, blank=True)
+    surge_main_aux_br_result = models.CharField(max_length=20, null=True, blank=True)
+    
+    # Inductance Tests
+    inductance_1 = models.CharField(max_length=50, null=True, blank=True)
+    l1_result = models.CharField(max_length=20, null=True, blank=True)
+    inductance_2 = models.CharField(max_length=50, null=True, blank=True)
+    l2_result = models.CharField(max_length=20, null=True, blank=True)
+    inductance_3 = models.CharField(max_length=50, null=True, blank=True)
+    l3_result = models.CharField(max_length=20, null=True, blank=True)
+    
     imported_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'stator_balancing'
+        db_table = 'stator_testing'
         ordering = ['-imported_at']
 
     def __str__(self):
