@@ -172,6 +172,43 @@ function showDetail(data, sn) {
   document.getElementById('detail-sn').textContent = sn;
   var htmlOut = '';
 
+  const getBadge = (val) => {
+    if (!val) return '—';
+    const cleanVal = val.toString().toLowerCase();
+    const isPass = cleanVal === 'pass' || cleanVal === 'ok' || cleanVal === 'marked';
+    const bColor = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+    const dotColor = isPass ? 'bg-green-500' : 'bg-red-500';
+    return `
+      <span class="inline-flex items-center gap-1.5 text-[10px] font-bold ${bColor} px-2 py-0.5 rounded-full">
+        <span class="h-1 w-1 rounded-full ${dotColor}"></span>${val}
+      </span>
+    `;
+  };
+
+  const renderField = (label, val, isBadge = false) => {
+    if (val === null || val === undefined || val === '' || val === 'nan') val = '—';
+    return `
+      <div class="flex items-center justify-between py-2.5">
+        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">${label}</span>
+        <div class="text-sm font-bold text-slate-900 font-mono">${isBadge ? getBadge(val) : val}</div>
+      </div>
+    `;
+  };
+
+  const renderSection = (title, icon, content, iconColorClass = 'text-primary') => {
+    return `
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+          <span class="material-symbols-outlined text-lg ${iconColorClass}">${icon}</span>
+          <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">${title}</h4>
+        </div>
+        <div class="px-5 divide-y divide-slate-100">
+          ${content}
+        </div>
+      </div>
+    `;
+  };
+
   if (data.laser_marking) {
     var s = data.laser_marking;
     var ptLabel = s.part_type || 'N/A';
@@ -181,74 +218,97 @@ function showDetail(data, sn) {
       : 'bg-slate-100 text-slate-400';
     var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
 
-    var cards = [
-      { label:'Part Number', value: s.part_number },
-      { label:'Line No.', value: s.line_no },
-      { label:'Shift', value: s.shift },
-      { label:'Part Type', value: ptHtml },
-      { label:'Status', value: '<span class="' + (s.status === 'Marked' ? 'text-green-600' : 'text-amber-600') + '">' + s.status + '</span>' },
-      { label:'Created At', value: s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—' },
-      { label:'Record ID', value: '#' + s.id }
-    ];
+    var lmContent = [
+      renderField('Part Number', s.part_number),
+      renderField('Line No.', s.line_no),
+      renderField('Shift', s.shift),
+      renderField('Part Type', ptHtml),
+      renderField('Status', s.status, true),
+      renderField('Created At', s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—'),
+      renderField('Record ID', '#' + s.id)
+    ].join('');
 
-    htmlOut += '<div class="mt-2"><h3 class="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2 flex items-center gap-2"><span class="material-symbols-outlined text-green-500 text-lg">precision_manufacturing</span> Laser Marking</h3><div class="grid grid-cols-2 md:grid-cols-4 gap-4">';
-    for (var i = 0; i < cards.length; i++) {
-      var c = cards[i];
-      htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
-                 '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
-                 '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
-                 '</div>';
-    }
-    htmlOut += '</div></div>';
+    htmlOut += renderSection('Laser Marking Details', 'precision_manufacturing', lmContent, 'text-green-500');
   }
 
   if (data.rotor_balancing) {
     var r = data.rotor_balancing;
-    var rsColor = r.result === 'Pass' ? 'text-green-600' : 'text-red-600';
-    var rsVal = '<span class="' + rsColor + '">' + r.result + '</span>';
-    
-    var rCards = [
-      { label:'Result', value: rsVal },
-      { label:'Rotor Type', value: r.rotor_type || '—' },
-      { label:'Measure Run', value: r.measure_run !== '' ? r.measure_run : '—' },
-      { label:'Balancing Run', value: r.balancing_run !== '' ? r.balancing_run : '—' },
-      { label:'RPM', value: r.rpm !== '' ? r.rpm : '—' },
-      { label:'Recorded At', value: r.recorded_at || '—' }
-    ];
-    
-    htmlOut += '<div class="mt-6"><h3 class="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2 flex items-center gap-2"><span class="material-symbols-outlined text-blue-500 text-lg">settings</span> Rotor Balancing</h3><div class="grid grid-cols-2 md:grid-cols-4 gap-4">';
-    for (var i = 0; i < rCards.length; i++) {
-      var c = rCards[i];
-      htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
-                 '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
-                 '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
-                 '</div>';
-    }
-    htmlOut += '</div></div>';
+    var rbContent = [
+      renderField('Final Result', r.result, true),
+      renderField('Rotor Type', r.rotor_type),
+      renderField('Measure Run', r.measure_run),
+      renderField('Balancing Run', r.balancing_run),
+      renderField('RPM', r.rpm),
+      renderField('PL1 [G MM]', r.plane1_weight),
+      renderField('PL1 [DEG]', r.plane1_degree),
+      renderField('PL2 [G MM]', r.plane2_weight),
+      renderField('PL2 [DEG]', r.plane2_degree),
+      renderField('Recorded At', r.recorded_at)
+    ].join('');
+
+    htmlOut += renderSection('Rotor Balancing Station', 'settings', rbContent, 'text-blue-500');
   }
 
   if (data.stator_testing) {
     var st = data.stator_testing;
-    var stColor = st.final_result === 'PASS' || st.final_result === 'Pass' ? 'text-green-600' : 'text-red-600';
-    var stVal = '<span class="' + stColor + '">' + st.final_result + '</span>';
     
-    var sCards = [
-      { label:'Final Result', value: stVal },
-      { label:'R/Y', value: st.ry || '—' },
-      { label:'R/Y Result', value: st.ry_result || '—' },
-      { label:'Surge Voltage', value: st.surge_voltage || '—' },
-      { label:'Recorded At', value: st.recorded_at || '—' }
-    ];
-    
-    htmlOut += '<div class="mt-6"><h3 class="text-sm font-bold text-slate-800 mb-3 border-b border-slate-100 pb-2 flex items-center gap-2"><span class="material-symbols-outlined text-purple-500 text-lg">bolt</span> Stator Testing</h3><div class="grid grid-cols-2 md:grid-cols-4 gap-4">';
-    for (var i = 0; i < sCards.length; i++) {
-      var c = sCards[i];
-      htmlOut += '<div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">' +
-                 '<p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">' + c.label + '</p>' +
-                 '<p class="text-base font-bold text-slate-900 font-mono">' + c.value + '</p>' +
-                 '</div>';
-    }
-    htmlOut += '</div></div>';
+    var stSummary = [
+      renderField('Final Result', st.final_result, true),
+      renderField('Operator', st.operator),
+      renderField('Part Type / Code', st.code_number),
+      renderField('Symmetry', st.symmetry),
+      renderField('Recorded At', st.recorded_at)
+    ].join('');
+
+    var stResistance = [
+      renderField('R/Y Resistance', st.ry),
+      renderField('R/Y Result', st.ry_result, true),
+      renderField('Y/B Resistance', st.yb),
+      renderField('Y/B Result', st.yb_result, true),
+      renderField('B/R Resistance', st.br),
+      renderField('B/R Result', st.br_result, true)
+    ].join('');
+
+    var stElectrical = [
+      renderField('THD', st.thd_win),
+      renderField('THD Result', st.thd_result, true),
+      renderField('Insulation Res.', st.ir_m_ohms),
+      renderField('IR Result', st.ir_result, true),
+      renderField('High Voltage', st.high_voltage),
+      renderField('HV Result', st.hv_result, true)
+    ].join('');
+
+    var stSurge = [
+      renderField('Surge Voltage', st.surge_voltage),
+      renderField('Main R/Y Err%', st.surge_main_ry_error),
+      renderField('R/Y Result', st.surge_ry_result, true),
+      renderField('Aux Y/B Err%', st.surge_aux_yb_error),
+      renderField('Y/B Result', st.surge_aux_yb_result, true),
+      renderField('M-A B/R Err%', st.surge_main_aux_br_error),
+      renderField('B/R Result', st.surge_main_aux_br_result, true)
+    ].join('');
+
+    var stInductance = [
+      renderField('Inductance 1', st.inductance_1),
+      renderField('L1 Result', st.l1_result, true),
+      renderField('Inductance 2', st.inductance_2),
+      renderField('L2 Result', st.l2_result, true),
+      renderField('Inductance 3', st.inductance_3),
+      renderField('L3 Result', st.l3_result, true)
+    ].join('');
+
+    htmlOut += `
+      <div class="mt-8 space-y-2">
+        <h3 class="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <span class="material-symbols-outlined text-purple-500">bolt</span> Stator Testing Records
+        </h3>
+        ${renderSection('Summary', 'info', stSummary, 'text-slate-400')}
+        ${renderSection('Resistance Tests', 'electrical_services', stResistance, 'text-primary')}
+        ${renderSection('Electrical Tests', 'dynamic_form', stElectrical, 'text-primary')}
+        ${renderSection('Surge Tests', 'analytics', stSurge, 'text-primary')}
+        ${renderSection('Inductance Tests', 'potted_plant', stInductance, 'text-primary')}
+      </div>
+    `;
   }
 
   document.getElementById('detail-cards').innerHTML = htmlOut;
