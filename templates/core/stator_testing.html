@@ -138,28 +138,17 @@ function renderTable(data) {
   }
 
   const getBadge = (val) => {
-    if (!val) return '—';
+    if (!val || val === 'nan') return '—';
     const cleanVal = val.toString().toLowerCase();
     const isPass = cleanVal === 'pass' || cleanVal === 'ok';
     const bColor = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
-    const dotColor = isPass ? 'bg-green-500' : 'bg-red-500';
     return `
-      <span class="inline-flex items-center gap-1.5 text-[10px] font-bold ${bColor} px-2 py-0.5 rounded-full">
-        <span class="h-1 w-1 rounded-full ${dotColor}"></span>${val}
+      <span class="inline-block ${bColor} text-xs font-medium px-2 py-0.5 rounded-full">
+        ${val}
       </span>
     `;
   };
 
-  const renderField = (label, val, isBadge = false) => {
-    if (val === null || val === undefined || val === '' || val === 'nan') val = '—';
-    return `
-      <div class="flex items-center justify-between py-2.5">
-        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">${label}</span>
-        <div class="text-sm font-bold text-slate-900 font-mono">${isBadge ? getBadge(val) : val}</div>
-      </div>
-    `;
-  };
-  
   const rows = [];
   data.forEach(r => {
     const isPass = r.final_result && r.final_result.toLowerCase() === 'pass';
@@ -194,102 +183,171 @@ function renderTable(data) {
 
     // Detail Row
     if (isExpanded) {
-      // Group contents
-      const metaFields = [
-        renderField('Operator', r.operator),
-        renderField('Part Type / Code', r.code_number),
-        renderField('Symmetry', r.symmetry),
-        renderField('Recorded At', r.recorded_at)
-      ].join('');
-
-      const resistanceFields = [
-        renderField('R/Y Resistance', r.ry),
-        renderField('R/Y Result', r.ry_result, true),
-        renderField('Y/B Resistance', r.yb),
-        renderField('Y/B Result', r.yb_result, true),
-        renderField('B/R Resistance', r.br),
-        renderField('B/R Result', r.br_result, true)
-      ].join('');
-
-      const electricalFields = [
-        renderField('THD', r.thd_win),
-        renderField('THD Result', r.thd_result, true),
-        renderField('Insulation Res.', r.ir_m_ohms),
-        renderField('IR Result', r.ir_result, true),
-        renderField('High Voltage', r.high_voltage),
-        renderField('HV Result', r.hv_result, true)
-      ].join('');
-
-      const surgeFields = [
-        renderField('Surge Voltage', r.surge_voltage),
-        renderField('Main R/Y Err%', r.surge_main_ry_error),
-        renderField('R/Y Result', r.surge_ry_result, true),
-        renderField('Aux Y/B Err%', r.surge_aux_yb_error),
-        renderField('Y/B Result', r.surge_aux_yb_result, true),
-        renderField('M-A B/R Err%', r.surge_main_aux_br_error),
-        renderField('B/R Result', r.surge_main_aux_br_result, true)
-      ].join('');
-
-      const inductanceFields = [
-        renderField('Inductance 1', r.inductance_1),
-        renderField('L1 Result', r.l1_result, true),
-        renderField('Inductance 2', r.inductance_2),
-        renderField('L2 Result', r.l2_result, true),
-        renderField('Inductance 3', r.inductance_3),
-        renderField('L3 Result', r.l3_result, true)
-      ].join('');
-
       rows.push(`
         <tr>
           <td colspan="2" class="p-0 border-t border-slate-100">
-            <div class="bg-[#F8F9FA] px-6 md:px-24 py-8 space-y-6">
+            <div class="bg-gray-50 px-6 md:px-24 py-4">
               
-              <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="bg-slate-50 px-5 py-2 border-b border-slate-200">
-                  <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">General Information</h4>
-                </div>
-                <div class="px-5 divide-y divide-slate-100">
-                  ${metaFields}
-                </div>
-              </div>
-
-              <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="bg-slate-50 px-5 py-2 border-b border-slate-200">
-                  <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Resistance Tests</h4>
-                </div>
-                <div class="px-5 divide-y divide-slate-100">
-                  ${resistanceFields}
-                </div>
-              </div>
-
-              <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="bg-slate-50 px-5 py-2 border-b border-slate-200">
-                  <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Electrical Tests</h4>
-                </div>
-                <div class="px-5 divide-y divide-slate-100">
-                  ${electricalFields}
-                </div>
-              </div>
-
-              <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="bg-slate-50 px-5 py-2 border-b border-slate-200">
-                  <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Surge Tests</h4>
-                </div>
-                <div class="px-5 divide-y divide-slate-100">
-                  ${surgeFields}
+              <!-- General Info -->
+              <div class="mb-2">
+                <h4 class="text-xs font-semibold uppercase text-gray-400 mb-1">General Information</h4>
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+                  <table class="w-full text-sm border-collapse">
+                    <tbody class="divide-y divide-gray-100">
+                      <tr>
+                        <td class="px-2 py-1 font-semibold text-gray-500 w-1/3">Operator</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${r.operator || '—'}</td>
+                      </tr>
+                      <tr>
+                        <td class="px-2 py-1 font-semibold text-gray-500">Part Type/Code</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${r.code_number || '—'}</td>
+                      </tr>
+                      <tr>
+                        <td class="px-2 py-1 font-semibold text-gray-500">Symmetry</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${r.symmetry || '—'}</td>
+                      </tr>
+                      <tr>
+                        <td class="px-2 py-1 font-semibold text-gray-500">Recorded At</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${r.recorded_at || '—'}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
-              <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="bg-slate-50 px-5 py-2 border-b border-slate-200">
-                  <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Inductance Tests</h4>
-                </div>
-                <div class="px-5 divide-y divide-slate-100">
-                  ${inductanceFields}
+              <!-- Resistance Tests -->
+              <div class="mb-2">
+                <h4 class="text-xs font-semibold uppercase text-gray-400 mb-1">Resistance Tests</h4>
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+                  <table class="w-full text-sm border-collapse">
+                    <thead>
+                      <tr class="bg-gray-100 text-xs uppercase font-semibold text-gray-500">
+                        <th class="px-2 py-1 text-left">Phase</th>
+                        <th class="px-2 py-1 text-left">Resistance (mΩ)</th>
+                        <th class="px-2 py-1 text-right">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">R/Y</td>
+                        <td class="px-2 py-1 font-mono">${r.ry || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.ry_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Y/B</td>
+                        <td class="px-2 py-1 font-mono">${r.yb || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.yb_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">B/R</td>
+                        <td class="px-2 py-1 font-mono">${r.br || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.br_result)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
-              <div class="pt-4 flex justify-between items-center">
+              <!-- Electrical Tests -->
+              <div class="mb-2">
+                <h4 class="text-xs font-semibold uppercase text-gray-400 mb-1">Electrical Tests</h4>
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+                  <table class="w-full text-sm border-collapse">
+                    <thead>
+                      <tr class="bg-gray-100 text-xs uppercase font-semibold text-gray-500">
+                        <th class="px-2 py-1 text-left">Test</th>
+                        <th class="px-2 py-1 text-left">Value</th>
+                        <th class="px-2 py-1 text-right">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">THD</td>
+                        <td class="px-2 py-1 font-mono">${r.thd_win || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.thd_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Insulation Resistance</td>
+                        <td class="px-2 py-1 font-mono">${r.ir_m_ohms || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.ir_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">High Voltage</td>
+                        <td class="px-2 py-1 font-mono">${r.high_voltage || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.hv_result)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Surge Tests -->
+              <div class="mb-2">
+                <h4 class="text-xs font-semibold uppercase text-gray-400 mb-1">Surge Tests</h4>
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+                  <table class="w-full text-sm border-collapse">
+                    <thead>
+                      <tr class="bg-gray-100 text-xs uppercase font-semibold text-gray-500">
+                        <th class="px-2 py-1 text-left">Test</th>
+                        <th class="px-2 py-1 text-left">Error%</th>
+                        <th class="px-2 py-1 text-right">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Main R/Y</td>
+                        <td class="px-2 py-1 font-mono">${r.surge_main_ry_error || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.surge_ry_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Aux Y/B</td>
+                        <td class="px-2 py-1 font-mono">${r.surge_aux_yb_error || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.surge_aux_yb_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Main-Aux B/R</td>
+                        <td class="px-2 py-1 font-mono">${r.surge_main_aux_br_error || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.surge_main_aux_br_result)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Inductance Tests -->
+              <div class="mb-2">
+                <h4 class="text-xs font-semibold uppercase text-gray-400 mb-1">Inductance Tests</h4>
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+                  <table class="w-full text-sm border-collapse">
+                    <thead>
+                      <tr class="bg-gray-100 text-xs uppercase font-semibold text-gray-500">
+                        <th class="px-2 py-1 text-left">Test</th>
+                        <th class="px-2 py-1 text-left">Value</th>
+                        <th class="px-2 py-1 text-right">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Inductance 1</td>
+                        <td class="px-2 py-1 font-mono">${r.inductance_1 || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.l1_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Inductance 2</td>
+                        <td class="px-2 py-1 font-mono">${r.inductance_2 || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.l2_result)}</td>
+                      </tr>
+                      <tr class="text-gray-800">
+                        <td class="px-2 py-1">Inductance 3</td>
+                        <td class="px-2 py-1 font-mono">${r.inductance_3 || '—'}</td>
+                        <td class="px-2 py-1 text-right">${getBadge(r.l3_result)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="pt-2 flex justify-between items-center">
                 <p class="text-[10px] text-slate-400 font-medium italic uppercase tracking-widest">Record Imported: ${r.imported_at}</p>
                 <button onclick="event.stopPropagation(); deleteRecord(${r.id})" class="text-xs font-bold text-red-500 hover:text-red-700 transition-colors">
                   Delete Record
