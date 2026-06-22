@@ -1,6 +1,7 @@
 # core/admin.py
 from django.contrib import admin
-from .models import Serial, Part
+from django.utils.html import format_html
+from .models import Serial, Part, MagnetInsertion
 
 
 @admin.register(Serial)
@@ -15,6 +16,24 @@ class PartAdmin(admin.ModelAdmin):
     list_display = ('serial_number', 'part_number', 'part_name', 'line_no', 'shift', 'added_by', 'created_at')
     list_filter = ('part_name', 'shift')
     search_fields = ('serial_number', 'part_number')
+
+
+@admin.register(MagnetInsertion)
+class MagnetInsertionAdmin(admin.ModelAdmin):
+    list_display = ('stack_serial', 'magnet_serial', 'cycle_time', 'colored_result', 'shift', 'operator', 'timestamp')
+    list_filter = ('pass_fail', 'shift')
+    search_fields = ('stack_serial', 'magnet_serial')
+    list_per_page = 50
+
+    @admin.display(description='Result', ordering='pass_fail')
+    def colored_result(self, obj):
+        if obj.pass_fail:
+            return format_html(
+                '<span style="background:#3DAA6D;color:#fff;padding:3px 10px;border-radius:12px;font-weight:700;font-size:11px;">PASS</span>'
+            )
+        return format_html(
+            '<span style="background:#e74c3c;color:#fff;padding:3px 10px;border-radius:12px;font-weight:700;font-size:11px;">FAIL</span>'
+        )
 
 
 # ── Admin Branding ──────────────────────────────────────────────────────────

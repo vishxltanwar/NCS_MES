@@ -13,6 +13,7 @@ urlpatterns = [
     path('shift-report', views.shift_report_view, name='shift_report'),
     path('production-log', views.production_log_view, name='production_log'),
     path('rotor-balancing', views.rotor_balancing_view, name='rotor_balancing'),
+    path('magnet-insertion', views.magnet_insertion_view, name='magnet_insertion'),
     path('stator-testing', views.stator_testing_view, name='stator_testing'),
 
     # ── Auth API ──────────────────────────────────────────────────────────────
@@ -47,4 +48,11 @@ urlpatterns = [
     path('api/stator-testing/import/', views.api_stator_testing_import, name='api_stator_testing_import'),
     path('api/stator-testing/', views.api_stator_testing_list, name='api_stator_testing_list'),
     path('api/stator-testing/<int:pk>/', views.api_stator_testing_delete, name='api_stator_testing_delete'),
+
+    # ── Magnet Insertion API ──────────────────────────────────────────────────
+    path('api/magnet-insertion/status/', views.api_magnet_insertion_status, name='api_magnet_insertion_status'),
+    path('api/magnet-insertion/', views.api_magnet_insertion_list, name='api_magnet_insertion_list'),
+    path('api/magnet-insertion/create/', views.api_magnet_insertion_create, name='api_magnet_insertion_create'),
+    path('api/magnet-insertion/stats/', views.api_magnet_insertion_stats, name='api_magnet_insertion_stats'),
+    path('api/magnet-insertion/<int:pk>/', views.api_magnet_insertion_delete, name='api_magnet_insertion_delete'),
 ]

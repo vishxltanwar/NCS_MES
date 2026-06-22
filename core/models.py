@@ -1,6 +1,7 @@
 # core/models.py
 # Napino MES — Django ORM models
 from django.db import models
+from django.contrib.auth.models import User
 
 
 class Serial(models.Model):
@@ -109,3 +110,23 @@ class StatorTestingRecord(models.Model):
 
     def __str__(self):
         return f"{self.serial_number} - {self.final_result}"
+
+
+class MagnetInsertion(models.Model):
+    SHIFT_CHOICES = [('A', 'A'), ('B', 'B'), ('C', 'C'), ('G', 'G')]
+
+    stack_serial  = models.CharField(max_length=64, db_index=True)
+    magnet_serial = models.CharField(max_length=64, db_index=True)
+    cycle_time    = models.FloatField(help_text='Cycle time in seconds')
+    pass_fail     = models.BooleanField(default=True, help_text='True=PASS, False=FAIL')
+    shift         = models.CharField(max_length=1, choices=SHIFT_CHOICES)
+    operator      = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    timestamp     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'magnet_insertion'
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        result = 'PASS' if self.pass_fail else 'FAIL'
+        return f"{self.stack_serial} - {result}"

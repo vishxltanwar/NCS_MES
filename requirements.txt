@@ -5,3 +5,4 @@ psycopg2-binary>=2.9
 openpyxl>=3.0
 python-dotenv>=1.0
 pandas>=2.0
+pymodbus>=3.0

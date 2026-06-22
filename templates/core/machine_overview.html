@@ -120,6 +120,59 @@
             </div>
         </a>
 
+        <!-- MIM-01 Online -->
+        <a href="/magnet-insertion" data-status="online"
+            class="machine-card block opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:550ms] rounded-2xl border border-teal-200 bg-white shadow-lg overflow-hidden relative hover:shadow-[0_10px_40px_rgba(20,184,166,0.15)] hover:-translate-y-1 transition-all duration-300">
+            <div class="absolute top-0 left-0 w-1.5 h-full bg-teal-500"></div>
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-6">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <h3 class="text-xl font-bold text-slate-900 font-mono tracking-tight">MIM-01</h3>
+                            <span
+                                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                                <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> ONLINE
+                            </span>
+                        </div>
+                        <p class="text-sm font-medium text-slate-500">Magnet Insertion Station</p>
+                    </div>
+                    <div
+                        class="bg-teal-50 border border-teal-100 rounded-lg px-3 py-1.5 text-right flex items-center gap-3">
+                        <div>
+                            <span
+                                class="block text-[10px] font-bold text-teal-400 uppercase tracking-widest leading-none mb-1">Mode</span>
+                            <span class="text-sm font-bold text-teal-700 leading-none">PLC Auto</span>
+                        </div>
+                        <span class="material-symbols-outlined text-teal-400 text-xl">arrow_forward</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                        <span
+                            class="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 mb-1">
+                            <span class="material-symbols-outlined text-[14px]">checklist</span> Processed
+                        </span>
+                        <span class="text-lg font-bold text-slate-700 font-mono" id="mim-parts">—</span>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                        <span
+                            class="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 mb-1">
+                            <span class="material-symbols-outlined text-[14px]">check_circle</span> Passed
+                        </span>
+                        <span class="text-lg font-bold text-green-600 font-mono" id="mim-passed">—</span>
+                    </div>
+                    <div class="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                        <span
+                            class="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 mb-1">
+                            <span class="material-symbols-outlined text-[14px]">timer</span> Uptime
+                        </span>
+                        <span class="text-lg font-bold text-green-600 font-mono">99%</span>
+                    </div>
+                </div>
+            </div>
+        </a>
+
         <!-- RBM-01 Online -->
         <a href="/rotor-balancing" data-status="online"
             class="machine-card block opacity-0 animate-[fadeInUp_0.6s_cubic-bezier(0.16,1,0.3,1)_forwards] [animation-delay:600ms] rounded-2xl border border-blue-200 bg-white shadow-lg overflow-hidden relative hover:shadow-[0_10px_40px_rgba(59,130,246,0.15)] hover:-translate-y-1 transition-all duration-300">
@@ -280,6 +333,8 @@ const res = await fetch('/api/stats');
 if (!res.ok) return;
 const d = await res.json();
 document.getElementById('lms-parts').textContent = d.marked_today;
+if(document.getElementById('mim-parts')) document.getElementById('mim-parts').textContent = d.magnet_total || 0;
+if(document.getElementById('mim-passed')) document.getElementById('mim-passed').textContent = d.magnet_pass || 0;
 if(document.getElementById('rbm-parts')) document.getElementById('rbm-parts').textContent = d.rotor_total || 0;
 if(document.getElementById('rbm-passed')) document.getElementById('rbm-passed').textContent = d.rotor_pass || 0;
 if(document.getElementById('sbm-parts')) document.getElementById('sbm-parts').textContent = d.stator_total || 0;

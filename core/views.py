@@ -12,7 +12,9 @@ import openpyxl
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
-from .models import Serial, Part, RotorBalancing, StatorTestingRecord
+from pymodbus.client import ModbusTcpClient
+import struct
+from .models import Serial, Part, RotorBalancing, StatorTestingRecord, MagnetInsertion
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -104,6 +106,11 @@ def rotor_balancing_view(request):
 @login_required
 def stator_testing_view(request):
     return _render_page(request, 'stator_testing.html', 'stator_testing')
+
+
+@login_required
+def magnet_insertion_view(request):
+    return _render_page(request, 'magnet_insertion.html', 'magnet_insertion')
 
 
 def _user_ctx(user):
@@ -259,6 +266,11 @@ def api_stats(request):
     stator_total = stator_today_objs.count()
     stator_pass = stator_today_objs.filter(final_result__iexact='Pass').count()
     stator_fail = stator_today_objs.filter(final_result__iexact='Fail').count()
+
+    magnet_today_objs = MagnetInsertion.objects.filter(timestamp__date=today)
+    magnet_total = magnet_today_objs.count()
+    magnet_pass = magnet_today_objs.filter(pass_fail=True).count()
+    magnet_fail = magnet_today_objs.filter(pass_fail=False).count()
     
     return Response({
         'total_today': total_today,
@@ -271,6 +283,9 @@ def api_stats(request):
         'stator_total': stator_total,
         'stator_pass': stator_pass,
         'stator_fail': stator_fail,
+        'magnet_total': magnet_total,
+        'magnet_pass': magnet_pass,
+        'magnet_fail': magnet_fail,
     })
 
 
@@ -354,6 +369,21 @@ def api_traceability_search(request):
             'imported_at': stator.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if stator.imported_at else '',
         }
         
+    # Magnet Insertion
+    magnet = MagnetInsertion.objects.filter(stack_serial__iexact=serial).first()
+    if magnet:
+        response_data['magnet_insertion'] = {
+            'id': magnet.id,
+            'stack_serial': magnet.stack_serial,
+            'magnet_serial': magnet.magnet_serial,
+            'cycle_time': magnet.cycle_time,
+            'pass_fail': magnet.pass_fail,
+            'result': 'PASS' if magnet.pass_fail else 'FAIL',
+            'shift': magnet.shift,
+            'operator': magnet.operator.get_full_name() if magnet.operator else '',
+            'timestamp': magnet.timestamp.astimezone(IST).isoformat() if magnet.timestamp else '',
+        }
+
     if not response_data:
         return Response({'detail': 'No Record Found'}, status=404)
         
@@ -959,3 +989,161 @@ def api_stator_testing_delete(request, pk):
         return Response({'success': True})
     except StatorTestingRecord.DoesNotExist:
         return Response({'success': False, 'error': 'Record not found'}, status=404)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAGNET INSERTION API
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_view(['GET'])
+def api_magnet_insertion_list(request):
+    records = MagnetInsertion.objects.all().order_by('-timestamp')[:200]
+    data = []
+    for r in records:
+        data.append({
+            'id': r.id,
+            'stack_serial': r.stack_serial,
+            'magnet_serial': r.magnet_serial,
+            'cycle_time': r.cycle_time,
+            'pass_fail': r.pass_fail,
+            'result': 'PASS' if r.pass_fail else 'FAIL',
+            'shift': r.shift,
+            'operator': r.operator.get_full_name() if r.operator else '',
+            'timestamp': r.timestamp.astimezone(IST).isoformat() if r.timestamp else '',
+        })
+    return Response(data)
+
+
+@api_view(['POST'])
+def api_magnet_insertion_create(request):
+    stack_serial = request.data.get('stack_serial', '').strip()
+    magnet_serial = request.data.get('magnet_serial', '').strip()
+    cycle_time = request.data.get('cycle_time')
+    pass_fail = request.data.get('pass_fail', True)
+    shift = request.data.get('shift', '').strip().upper()
+
+    if not stack_serial:
+        return Response({'detail': 'Stack serial is required'}, status=400)
+    if not magnet_serial:
+        return Response({'detail': 'Magnet serial is required'}, status=400)
+    if cycle_time is None:
+        return Response({'detail': 'Cycle time is required'}, status=400)
+    if shift not in ('A', 'B', 'C', 'G'):
+        return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
+
+    try:
+        cycle_time = float(cycle_time)
+    except (ValueError, TypeError):
+        return Response({'detail': 'Cycle time must be a number'}, status=400)
+
+    existing = MagnetInsertion.objects.filter(
+        stack_serial=stack_serial,
+        magnet_serial=magnet_serial,
+    ).first()
+    if existing:
+        return Response({
+            'id': existing.id,
+            'stack_serial': existing.stack_serial,
+            'magnet_serial': existing.magnet_serial,
+            'cycle_time': existing.cycle_time,
+            'pass_fail': existing.pass_fail,
+            'result': 'PASS' if existing.pass_fail else 'FAIL',
+            'shift': existing.shift,
+            'operator': existing.operator.get_full_name() if existing.operator else '',
+            'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
+            'duplicate': True,
+        })
+
+    # Auto-assign operator from logged-in user
+    operator = request.user if request.user.is_authenticated else None
+
+    try:
+        record = MagnetInsertion.objects.create(
+            stack_serial=stack_serial,
+            magnet_serial=magnet_serial,
+            cycle_time=cycle_time,
+            pass_fail=bool(pass_fail),
+            shift=shift,
+            operator=operator,
+        )
+        return Response({
+            'id': record.id,
+            'stack_serial': record.stack_serial,
+            'magnet_serial': record.magnet_serial,
+            'cycle_time': record.cycle_time,
+            'pass_fail': record.pass_fail,
+            'result': 'PASS' if record.pass_fail else 'FAIL',
+            'shift': record.shift,
+            'operator': record.operator.get_full_name() if record.operator else '',
+            'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
+        }, status=201)
+    except Exception as e:
+        return Response({'detail': f'Database error: {e}'}, status=500)
+
+
+@api_view(['GET'])
+def api_magnet_insertion_stats(request):
+    qs = MagnetInsertion.objects.all()
+    total = qs.count()
+    passed = qs.filter(pass_fail=True).count()
+    failed = qs.filter(pass_fail=False).count()
+    yield_pct = round((passed / total) * 100, 1) if total > 0 else 0.0
+
+    return Response({
+        'total': total,
+        'passed': passed,
+        'failed': failed,
+        'yield_pct': yield_pct,
+    })
+
+
+@api_view(['DELETE'])
+def api_magnet_insertion_delete(request, pk):
+    try:
+        record = MagnetInsertion.objects.get(pk=pk)
+        record.delete()
+        return Response({'success': True})
+    except MagnetInsertion.DoesNotExist:
+        return Response({'success': False, 'error': 'Record not found'}, status=404)
+
+
+def _decode_modbus_string(registers):
+    if not registers: return ""
+    b = b''
+    for reg in registers:
+        b += struct.pack('>H', reg)
+    # Strip null bytes and whitespace
+    return b.decode('ascii', errors='ignore').strip('\x00').strip()
+
+@api_view(['GET'])
+def api_magnet_insertion_status(request):
+    client = ModbusTcpClient('192.168.3.10', port=502, timeout=1)
+    try:
+        if not client.connect():
+            return Response({'connected': False})
+
+        res_mag = client.read_holding_registers(address=3230, count=15, device_id=1)
+        magnet_serial = ""
+        if not res_mag.isError():
+            magnet_serial = _decode_modbus_string(res_mag.registers)
+
+        res_stack = client.read_holding_registers(address=3260, count=15, device_id=1)
+        stack_serial = ""
+        if not res_stack.isError():
+            stack_serial = _decode_modbus_string(res_stack.registers)
+
+        cycle_complete = bool(magnet_serial and stack_serial)
+
+        return Response({
+            'connected': True,
+            'magnet_serial': magnet_serial or None,
+            'stack_serial': stack_serial or None,
+            'cycle_complete': cycle_complete,
+            # Not yet read from PLC registers — omit so auto-save does not record fake PASS/0s.
+            'pass_fail': None,
+            'cycle_time': None,
+        })
+    except Exception as e:
+        return Response({'connected': False, 'error': str(e)})
+    finally:
+        client.close()
