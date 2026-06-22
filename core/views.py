@@ -607,6 +607,32 @@ def api_production_log_day(request):
 # ROTOR BALANCING API
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _parse_rotor_recorded_at(date_val, time_val):
+    """Parse dd-mm-yy + hh:mm:ss from Excel row values (native datetime or strings)."""
+    recorded_at = None
+    try:
+        if isinstance(date_val, dt.datetime):
+            if isinstance(time_val, dt.time):
+                recorded_at = dt.datetime.combine(date_val.date(), time_val)
+            else:
+                recorded_at = date_val
+        elif isinstance(date_val, str) and isinstance(time_val, str):
+            date_str, time_str = date_val.strip(), time_val.strip()
+            if date_str and time_str:
+                dt_str = f"{date_str} {time_str}"
+                for fmt in ("%d-%m-%y %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        recorded_at = datetime.strptime(dt_str, fmt)
+                        break
+                    except ValueError:
+                        pass
+        if recorded_at and django_tz.is_naive(recorded_at):
+            recorded_at = django_tz.make_aware(recorded_at)
+    except (ValueError, TypeError):
+        pass
+    return recorded_at
+
+
 @api_view(['POST'])
 def api_rotor_balancing_import(request):
     file_obj = request.FILES.get('file')
@@ -648,17 +674,9 @@ def api_rotor_balancing_import(request):
             result_val = str(row[col_indices['InTol']]).strip().upper()
             rotor_type_val = str(row[col_indices['Rotor-Type']] or '').strip()
             
-            # recorded_at
             date_val = row[col_indices['dd-mm-yy']]
             time_val = row[col_indices['hh:mm:ss']]
-            recorded_at = None
-            try:
-                dt_str = f"{date_val} {time_val}"
-                recorded_at = datetime.strptime(dt_str, "%d-%m-%y %H:%M:%S")
-                if django_tz.is_naive(recorded_at):
-                    recorded_at = django_tz.make_aware(recorded_at)
-            except (ValueError, TypeError):
-                pass
+            recorded_at = _parse_rotor_recorded_at(date_val, time_val)
 
             final_res = 'Pass' if result_val == 'Y' else 'Fail'
 
