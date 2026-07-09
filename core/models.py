@@ -112,6 +112,22 @@ class StatorTestingRecord(models.Model):
         return f"{self.serial_number} - {self.final_result}"
 
 
+class MotorAssembly(models.Model):
+    motor_serial = models.CharField(max_length=32, unique=True, db_index=True)
+    rotor_serial = models.CharField(max_length=32, unique=True, db_index=True)
+    stator_serial = models.CharField(max_length=32, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'motor_assembly'
+        ordering = ['-updated_at']
+        verbose_name_plural = 'motor assemblies'
+
+    def __str__(self):
+        return f"{self.motor_serial} = {self.rotor_serial} + {self.stator_serial}"
+
+
 class MagnetInsertion(models.Model):
     SHIFT_CHOICES = [('A', 'A'), ('B', 'B'), ('C', 'C'), ('G', 'G')]
 

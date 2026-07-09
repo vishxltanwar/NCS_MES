@@ -1,0 +1,228 @@
+{% extends "core/base.html" %}
+{% block title %}Motor Details | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block content %}
+<div class="max-w-[1400px] mx-auto px-8 py-6 space-y-5">
+  <div class="flex items-center justify-between">
+    <div>
+      <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+        <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
+        <span class="material-symbols-outlined text-sm">chevron_right</span>
+        <span class="text-primary">Motor Details</span>
+      </nav>
+      <h2 class="text-2xl font-bold text-slate-900">Motor Details</h2>
+      <p class="text-sm text-slate-500 mt-0.5">Link Motor Sr No to Rotor Sr No and Stator Sr No</p>
+    </div>
+    <button onclick="loadLinks()" class="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:text-primary transition-all border border-slate-200 shadow-sm">
+      <span class="material-symbols-outlined text-lg">refresh</span> Refresh
+    </button>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-5">
+    <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+        <span class="material-symbols-outlined text-primary text-lg">hub</span>
+        <h3 class="font-bold text-sm text-slate-900 uppercase tracking-tight">Assembly Link</h3>
+      </div>
+      <form id="assembly-form" class="p-5 space-y-4" onsubmit="submitLink(event)">
+        <div>
+          <label for="motor-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Motor Sr No</label>
+          <input id="motor-serial" name="motor_serial" autocomplete="off"
+            class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm font-semibold text-slate-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+            placeholder="Scan or enter motor serial">
+        </div>
+        <div>
+          <label for="rotor-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Rotor Sr No</label>
+          <input id="rotor-serial" name="rotor_serial" autocomplete="off"
+            class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm font-semibold text-slate-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+            placeholder="Scan or enter rotor serial">
+        </div>
+        <div>
+          <label for="stator-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Stator Sr No</label>
+          <input id="stator-serial" name="stator_serial" autocomplete="off"
+            class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm font-semibold text-slate-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+            placeholder="Scan or enter stator serial">
+        </div>
+
+        <div id="form-hint" class="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 text-xs text-slate-500">
+          Existing motor links are blocked from changing to a different rotor or stator.
+        </div>
+
+        <div class="flex items-center gap-2 pt-1">
+          <button id="save-btn" type="submit"
+            class="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-bold text-white hover:opacity-90 transition-all shadow-md shadow-primary/20">
+            <span class="material-symbols-outlined text-lg">save</span> Save Link
+          </button>
+          <button type="button" onclick="resetForm()"
+            class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors">
+            Clear
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div class="flex items-center gap-2">
+          <h3 class="font-bold text-sm text-slate-900 uppercase tracking-tight">Existing Links</h3>
+          <span id="table-count" class="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">0 records</span>
+        </div>
+        <div class="relative w-full md:w-80">
+          <span class="material-symbols-outlined absolute left-3 top-2.5 text-base text-slate-400">search</span>
+          <input id="search-input" oninput="renderTable()" autocomplete="off"
+            class="w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 py-2 text-sm font-medium outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+            placeholder="Search motor, rotor, or stator">
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm border-separate border-spacing-0">
+          <thead class="sticky top-0 bg-white z-10">
+            <tr class="bg-slate-50 border-b border-slate-200 whitespace-nowrap">
+              <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Motor Sr No</th>
+              <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Rotor Sr No</th>
+              <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Stator Sr No</th>
+              <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Results</th>
+              <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Updated</th>
+              <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody id="links-tbody" class="divide-y divide-slate-100">
+            <tr>
+              <td colspan="6" class="px-5 py-6 text-center text-slate-400 text-xs">Loading links...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+let allLinks = [];
+let isSaving = false;
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, function(ch) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+  });
+}
+
+function serialBadge(value, tone) {
+  const color = tone === 'motor' ? 'text-orange-700 bg-orange-50' : tone === 'rotor' ? 'text-blue-700 bg-blue-50' : 'text-purple-700 bg-purple-50';
+  return `<span class="inline-flex rounded-md px-2 py-1 font-mono text-xs font-bold ${color}">${escapeHtml(value)}</span>`;
+}
+
+function resultBadge(value) {
+  if (!value) return '<span class="text-xs text-slate-400">No station result</span>';
+  const isPass = String(value).toLowerCase() === 'pass';
+  const color = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+  return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold ${color}">${escapeHtml(value)}</span>`;
+}
+
+async function loadLinks() {
+  try {
+    const res = await fetch('/api/machines/motor-assembly/');
+    allLinks = await res.json();
+    renderTable();
+  } catch (err) {
+    console.error('Error loading motor assembly links:', err);
+    showToast('Unable to load motor links', 'error');
+  }
+}
+
+function renderTable() {
+  const tbody = document.getElementById('links-tbody');
+  const tableCount = document.getElementById('table-count');
+  const query = document.getElementById('search-input').value.trim().toLowerCase();
+  const rows = allLinks.filter(r => {
+    const text = `${r.motor_serial} ${r.rotor_serial} ${r.stator_serial}`.toLowerCase();
+    return !query || text.includes(query);
+  });
+
+  tableCount.textContent = rows.length + ' records';
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-6 text-center text-slate-400 text-xs">No motor assembly links found.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const updated = r.updated_at ? new Date(r.updated_at).toLocaleString('en-IN', { hour12: false }) : '-';
+    return `
+      <tr class="hover:bg-[#F8F9FA] transition-all">
+        <td class="px-5 py-3">${serialBadge(r.motor_serial, 'motor')}</td>
+        <td class="px-5 py-3">${serialBadge(r.rotor_serial, 'rotor')}</td>
+        <td class="px-5 py-3">${serialBadge(r.stator_serial, 'stator')}</td>
+        <td class="px-5 py-3">
+          <div class="flex flex-wrap items-center gap-1.5">
+            ${resultBadge(r.rotor_result)}
+            ${resultBadge(r.stator_result)}
+          </div>
+        </td>
+        <td class="px-5 py-3 text-xs text-slate-500 whitespace-nowrap">${escapeHtml(updated)}</td>
+        <td class="px-5 py-3 text-right">
+          <button onclick="editLink(${r.id})" class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/10 transition-colors">
+            <span class="material-symbols-outlined text-sm">edit</span> Edit
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function editLink(id) {
+  const record = allLinks.find(r => r.id === id);
+  if (!record) return;
+  document.getElementById('motor-serial').value = record.motor_serial;
+  document.getElementById('rotor-serial').value = record.rotor_serial;
+  document.getElementById('stator-serial').value = record.stator_serial;
+  document.getElementById('form-hint').textContent = 'Editing loaded link. Changing rotor/stator for the same motor is blocked by backend validation.';
+  document.getElementById('motor-serial').focus();
+}
+
+function resetForm() {
+  document.getElementById('assembly-form').reset();
+  document.getElementById('form-hint').textContent = 'Existing motor links are blocked from changing to a different rotor or stator.';
+}
+
+async function submitLink(event) {
+  event.preventDefault();
+  if (isSaving) return;
+
+  const payload = {
+    motor_serial: document.getElementById('motor-serial').value.trim(),
+    rotor_serial: document.getElementById('rotor-serial').value.trim(),
+    stator_serial: document.getElementById('stator-serial').value.trim(),
+  };
+
+  isSaving = true;
+  UI.setLoading('save-btn', true);
+
+  try {
+    const res = await fetch('/api/machines/motor-assembly/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (res.ok) {
+      showToast(data.updated ? 'Motor link updated' : 'Motor link saved', 'success');
+      resetForm();
+      await loadLinks();
+    } else {
+      const errors = Array.isArray(data.errors) ? data.errors.join('; ') : data.detail;
+      showToast(errors || 'Failed to save motor link', res.status === 409 ? 'warning' : 'error');
+    }
+  } catch (err) {
+    console.error('Save motor assembly error:', err);
+    showToast('Connection error. Please try again.', 'error');
+  } finally {
+    isSaving = false;
+    UI.setLoading('save-btn', false, '<span class="material-symbols-outlined text-lg">save</span> Save Link');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadLinks);
+{% endblock %}

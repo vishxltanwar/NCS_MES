@@ -15,6 +15,7 @@ urlpatterns = [
     path('rotor-balancing', views.rotor_balancing_view, name='rotor_balancing'),
     path('magnet-insertion', views.magnet_insertion_view, name='magnet_insertion'),
     path('stator-testing', views.stator_testing_view, name='stator_testing'),
+    path('motor-assembly', views.motor_assembly_view, name='motor_assembly'),
 
     # ── Auth API ──────────────────────────────────────────────────────────────
     path('api/login', views.api_login, name='api_login'),
@@ -48,6 +49,9 @@ urlpatterns = [
     path('api/stator-testing/import/', views.api_stator_testing_import, name='api_stator_testing_import'),
     path('api/stator-testing/', views.api_stator_testing_list, name='api_stator_testing_list'),
     path('api/stator-testing/<int:pk>/', views.api_stator_testing_delete, name='api_stator_testing_delete'),
+
+    # Motor Assembly API
+    path('api/machines/motor-assembly/', views.api_motor_assembly, name='api_motor_assembly'),
 
     # ── Magnet Insertion API ──────────────────────────────────────────────────
     path('api/magnet-insertion/status/', views.api_magnet_insertion_status, name='api_magnet_insertion_status'),

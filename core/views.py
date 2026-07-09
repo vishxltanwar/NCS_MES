@@ -14,7 +14,8 @@ import datetime as dt
 from django.utils import timezone as django_tz
 from pymodbus.client import ModbusTcpClient
 import struct
-from .models import Serial, Part, RotorBalancing, StatorTestingRecord, MagnetInsertion
+from django.db import IntegrityError, models, transaction
+from .models import Serial, Part, RotorBalancing, StatorTestingRecord, MotorAssembly, MagnetInsertion
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -111,6 +112,11 @@ def stator_testing_view(request):
 @login_required
 def magnet_insertion_view(request):
     return _render_page(request, 'magnet_insertion.html', 'magnet_insertion')
+
+
+@login_required
+def motor_assembly_view(request):
+    return _render_page(request, 'motor_assembly.html', 'motor_assembly')
 
 
 def _user_ctx(user):
@@ -994,6 +1000,133 @@ def api_stator_testing_delete(request, pk):
 # ══════════════════════════════════════════════════════════════════════════════
 # MAGNET INSERTION API
 # ══════════════════════════════════════════════════════════════════════════════
+
+# =============================================================================
+# MOTOR ASSEMBLY API
+# =============================================================================
+
+def _master_serial_for_part(serial_number, part_type):
+    serial = Serial.objects.filter(
+        serial_number__iexact=serial_number,
+        part_type__iexact=part_type,
+    ).first()
+    if serial:
+        return serial.serial_number
+
+    part = Part.objects.filter(
+        serial_number__iexact=serial_number,
+        part_name__iexact=part_type,
+    ).first()
+    if part:
+        return part.serial_number
+
+    return None
+
+
+def _motor_assembly_payload(record):
+    rotor = RotorBalancing.objects.filter(serial_number__iexact=record.rotor_serial).first()
+    stator = StatorTestingRecord.objects.filter(serial_number__iexact=record.stator_serial).first()
+    return {
+        'id': record.id,
+        'motor_serial': record.motor_serial,
+        'rotor_serial': record.rotor_serial,
+        'stator_serial': record.stator_serial,
+        'rotor_result': rotor.result if rotor else '',
+        'stator_result': stator.final_result if stator else '',
+        'created_at': record.created_at.astimezone(IST).isoformat() if record.created_at else '',
+        'updated_at': record.updated_at.astimezone(IST).isoformat() if record.updated_at else '',
+    }
+
+
+@api_view(['GET', 'POST'])
+def api_motor_assembly(request):
+    if request.method == 'GET':
+        search = request.query_params.get('search', '').strip()
+        records = MotorAssembly.objects.all()
+        if search:
+            records = records.filter(
+                models.Q(motor_serial__icontains=search)
+                | models.Q(rotor_serial__icontains=search)
+                | models.Q(stator_serial__icontains=search)
+            )
+        return Response([_motor_assembly_payload(r) for r in records[:200]])
+
+    motor_serial = request.data.get('motor_serial', '').strip()
+    rotor_serial = request.data.get('rotor_serial', '').strip()
+    stator_serial = request.data.get('stator_serial', '').strip()
+
+    if not motor_serial:
+        return Response({'detail': 'Motor Sr No is required'}, status=400)
+    if not rotor_serial:
+        return Response({'detail': 'Rotor Sr No is required'}, status=400)
+    if not stator_serial:
+        return Response({'detail': 'Stator Sr No is required'}, status=400)
+
+    motor = _master_serial_for_part(motor_serial, 'Motor')
+    rotor = _master_serial_for_part(rotor_serial, 'Rotor')
+    stator = _master_serial_for_part(stator_serial, 'Stator')
+
+    missing = []
+    if not motor:
+        missing.append('Motor Sr No not found in serials/parts as Motor')
+    if not rotor:
+        missing.append('Rotor Sr No not found in serials/parts as Rotor')
+    if not stator:
+        missing.append('Stator Sr No not found in serials/parts as Stator')
+    if missing:
+        return Response({'detail': 'Validation failed', 'errors': missing}, status=400)
+
+    motor_serial = motor
+    rotor_serial = rotor
+    stator_serial = stator
+
+    rotor_conflict = MotorAssembly.objects.filter(
+        rotor_serial__iexact=rotor_serial
+    ).exclude(motor_serial__iexact=motor_serial).first()
+    if rotor_conflict:
+        return Response({
+            'detail': 'Rotor Sr No is already linked to a different motor',
+            'conflict': _motor_assembly_payload(rotor_conflict),
+        }, status=409)
+
+    stator_conflict = MotorAssembly.objects.filter(
+        stator_serial__iexact=stator_serial
+    ).exclude(motor_serial__iexact=motor_serial).first()
+    if stator_conflict:
+        return Response({
+            'detail': 'Stator Sr No is already linked to a different motor',
+            'conflict': _motor_assembly_payload(stator_conflict),
+        }, status=409)
+
+    existing = MotorAssembly.objects.filter(motor_serial__iexact=motor_serial).first()
+    if existing:
+        same_rotor = existing.rotor_serial.lower() == rotor_serial.lower()
+        same_stator = existing.stator_serial.lower() == stator_serial.lower()
+        if not same_rotor or not same_stator:
+            return Response({
+                'detail': 'Motor Sr No is already linked to a different rotor/stator. Re-linking is blocked.',
+                'conflict': _motor_assembly_payload(existing),
+            }, status=409)
+        existing.motor_serial = motor_serial
+        existing.rotor_serial = rotor_serial
+        existing.stator_serial = stator_serial
+        existing.save()
+        return Response({**_motor_assembly_payload(existing), 'updated': True})
+
+    try:
+        with transaction.atomic():
+            record = MotorAssembly.objects.create(
+                motor_serial=motor_serial,
+                rotor_serial=rotor_serial,
+                stator_serial=stator_serial,
+            )
+    except IntegrityError:
+        return Response({
+            'detail': 'A conflicting motor assembly link already exists. Refresh and try again.'
+        }, status=409)
+
+    return Response(_motor_assembly_payload(record), status=201)
+
 
 @api_view(['GET'])
 def api_magnet_insertion_list(request):

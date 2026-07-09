@@ -1,7 +1,7 @@
 # core/admin.py
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Serial, Part, MagnetInsertion
+from .models import Serial, Part, MotorAssembly, MagnetInsertion
 
 
 @admin.register(Serial)
@@ -37,6 +37,14 @@ class MagnetInsertionAdmin(admin.ModelAdmin):
 
 
 # ── Admin Branding ──────────────────────────────────────────────────────────
+@admin.register(MotorAssembly)
+class MotorAssemblyAdmin(admin.ModelAdmin):
+    list_display = ('motor_serial', 'rotor_serial', 'stator_serial', 'created_at', 'updated_at')
+    search_fields = ('motor_serial', 'rotor_serial', 'stator_serial')
+    readonly_fields = ('created_at', 'updated_at')
+    list_per_page = 50
+
+
 admin.site.site_header = "MES administration"
 admin.site.site_title = "MES Admin Portal"
 admin.site.index_title = "Welcome to MES Admin"
