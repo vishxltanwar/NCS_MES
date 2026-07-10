@@ -1,0 +1,315 @@
+{% extends "core/base.html" %}
+{% block title %}Motor Traceability | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block content %}
+<div class="max-w-[1200px] mx-auto px-8 py-6 space-y-6">
+  <div>
+    <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
+      <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
+      <span class="material-symbols-outlined text-sm">chevron_right</span>
+      <a href="/traceability" class="hover:text-primary transition-colors">Traceability</a>
+      <span class="material-symbols-outlined text-sm">chevron_right</span>
+      <span class="text-primary">Motor Traceability</span>
+    </nav>
+    <h2 class="text-2xl font-bold text-slate-900">Motor Traceability</h2>
+    <p class="text-slate-500 text-sm mt-1">Search a motor serial number to view linked rotor balancing and stator testing records.</p>
+  </div>
+
+  <div class="relative flex items-center bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-lg focus-within:border-primary transition-all">
+    <span class="material-symbols-outlined ml-5 text-slate-400 text-2xl">search</span>
+    <input id="motor-input" type="text" autocomplete="off" placeholder="Enter Motor Serial Number..."
+      class="w-full py-4 px-4 bg-transparent border-none text-lg font-mono focus:ring-0 placeholder:text-slate-300 outline-none" />
+    <button id="search-btn" onclick="searchMotor()"
+      class="mr-4 bg-primary text-white px-8 py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-lg shadow-primary/20">
+      Search <span class="material-symbols-outlined">account_tree</span>
+    </button>
+  </div>
+
+  <div id="placeholder-msg" class="flex flex-col items-center gap-3 py-16 text-slate-400">
+    <span class="material-symbols-outlined text-5xl">hub</span>
+    <p class="text-sm font-semibold">Enter a motor serial number above to view rotor and stator traceability</p>
+  </div>
+
+  <div id="status-msg" class="hidden rounded-xl border px-5 py-4"></div>
+
+  <div id="result-area" class="hidden space-y-5">
+    <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-6 py-4 border-b border-slate-100 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h3 class="font-bold text-slate-900 text-sm uppercase tracking-tight">Assembly Link</h3>
+          <p class="text-xs text-slate-500 mt-1">Motor Sr No: <span id="motor-sn" class="font-mono font-bold text-orange-700"></span></p>
+        </div>
+        <div class="text-xs text-slate-400">Updated: <span id="updated-at">-</span></div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
+        <button id="rotor-card" onclick="loadRotorDetail()"
+          class="group text-left rounded-xl border border-blue-100 bg-blue-50/60 p-5 hover:bg-blue-50 hover:border-blue-200 hover:shadow-sm transition-all">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="flex items-center gap-2 text-blue-700">
+                <span class="material-symbols-outlined">settings</span>
+                <span class="text-[10px] font-black uppercase tracking-widest">Rotor</span>
+              </div>
+              <p id="rotor-sn" class="font-mono text-lg font-black text-slate-900 mt-3"></p>
+              <p class="text-xs text-slate-500 mt-1">Rotor Balancing Record</p>
+            </div>
+            <span id="rotor-status"></span>
+          </div>
+          <div class="mt-5 flex items-center justify-between text-xs font-bold text-blue-700">
+            <span>View balancing details</span>
+            <span class="material-symbols-outlined text-base group-hover:translate-x-1 transition-transform">arrow_forward</span>
+          </div>
+        </button>
+
+        <button id="stator-card" onclick="loadStatorDetail()"
+          class="group text-left rounded-xl border border-purple-100 bg-purple-50/60 p-5 hover:bg-purple-50 hover:border-purple-200 hover:shadow-sm transition-all">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="flex items-center gap-2 text-purple-700">
+                <span class="material-symbols-outlined">bolt</span>
+                <span class="text-[10px] font-black uppercase tracking-widest">Stator</span>
+              </div>
+              <p id="stator-sn" class="font-mono text-lg font-black text-slate-900 mt-3"></p>
+              <p class="text-xs text-slate-500 mt-1">Stator Testing Record</p>
+            </div>
+            <span id="stator-status"></span>
+          </div>
+          <div class="mt-5 flex items-center justify-between text-xs font-bold text-purple-700">
+            <span>View testing details</span>
+            <span class="material-symbols-outlined text-base group-hover:translate-x-1 transition-transform">arrow_forward</span>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <div id="detail-panel" class="hidden space-y-4"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+let currentLink = null;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+  });
+}
+
+function emptyVal(value) {
+  return value === null || value === undefined || value === '' || String(value).toLowerCase() === 'nan';
+}
+
+function badge(value, fallbackText) {
+  if (emptyVal(value)) {
+    return `<span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-500">${fallbackText || 'Pending'}</span>`;
+  }
+  const isPass = String(value).toLowerCase() === 'pass' || String(value).toLowerCase() === 'ok';
+  const color = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+  return `<span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-bold ${color}">${escapeHtml(value)}</span>`;
+}
+
+function showStatus(message, type) {
+  const el = document.getElementById('status-msg');
+  const colors = {
+    error: 'bg-red-50 border-red-200 text-red-700',
+    warning: 'bg-amber-50 border-amber-200 text-amber-700',
+    info: 'bg-slate-50 border-slate-200 text-slate-600'
+  };
+  el.className = `rounded-xl border px-5 py-4 text-sm font-bold ${colors[type] || colors.info}`;
+  el.textContent = message;
+  el.classList.remove('hidden');
+}
+
+function clearState() {
+  document.getElementById('placeholder-msg').style.display = 'none';
+  document.getElementById('status-msg').classList.add('hidden');
+  document.getElementById('result-area').classList.add('hidden');
+  document.getElementById('detail-panel').classList.add('hidden');
+  document.getElementById('detail-panel').innerHTML = '';
+}
+
+async function searchMotor() {
+  const serial = document.getElementById('motor-input').value.trim();
+  if (!serial) return;
+  clearState();
+  UI.setLoading('search-btn', true);
+
+  try {
+    const res = await fetch('/api/traceability/motor/' + encodeURIComponent(serial) + '/');
+    const data = await res.json();
+
+    if (!res.ok) {
+      const type = data.code === 'rotor_stator_link_missing' ? 'warning' : 'error';
+      showStatus(data.detail || 'Motor traceability record not found', type);
+      return;
+    }
+
+    currentLink = data;
+    renderLink(data);
+  } catch (err) {
+    console.error('Motor traceability search failed:', err);
+    showStatus('Connection error. Please try again.', 'error');
+  } finally {
+    UI.setLoading('search-btn', false, 'Search <span class="material-symbols-outlined">account_tree</span>');
+  }
+}
+
+function renderLink(data) {
+  document.getElementById('motor-sn').textContent = data.motor_serial || '-';
+  document.getElementById('rotor-sn').textContent = data.rotor_serial || '-';
+  document.getElementById('stator-sn').textContent = data.stator_serial || '-';
+  document.getElementById('rotor-status').innerHTML = badge(data.rotor_result, data.rotor_balancing_created ? 'Created' : 'Not Created');
+  document.getElementById('stator-status').innerHTML = badge(data.stator_result, data.stator_testing_created ? 'Created' : 'Not Created');
+  document.getElementById('updated-at').textContent = data.updated_at ? new Date(data.updated_at).toLocaleString('en-IN', { hour12: false }) : '-';
+  document.getElementById('result-area').classList.remove('hidden');
+}
+
+function field(label, value, isBadge) {
+  const display = emptyVal(value) ? '-' : escapeHtml(value);
+  return `
+    <div class="flex items-center justify-between gap-4 py-2.5">
+      <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">${label}</span>
+      <div class="text-sm font-bold text-slate-900 font-mono text-right">${isBadge ? badge(value, '-') : display}</div>
+    </div>
+  `;
+}
+
+function section(title, icon, content, color) {
+  return `
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+        <span class="material-symbols-outlined text-lg ${color || 'text-primary'}">${icon}</span>
+        <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">${title}</h4>
+      </div>
+      <div class="px-5 divide-y divide-slate-100">${content}</div>
+    </div>
+  `;
+}
+
+function detailShell(title, serial, icon, body, color) {
+  return `
+    <div class="flex items-center justify-between border-b-2 border-slate-200 pb-4">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <span class="material-symbols-outlined ${color}">${icon}</span>
+          <h3 class="text-xl font-black">${title}</h3>
+        </div>
+        <p class="text-slate-500 font-medium">SN: <span class="font-mono font-bold text-primary">${escapeHtml(serial)}</span></p>
+      </div>
+      <button onclick="closeDetail()" class="text-xs font-bold text-slate-400 hover:text-slate-700 flex items-center gap-1">
+        <span class="material-symbols-outlined text-base">close</span> Close
+      </button>
+    </div>
+    ${body}
+  `;
+}
+
+function renderDetail(html) {
+  const panel = document.getElementById('detail-panel');
+  panel.innerHTML = html;
+  panel.classList.remove('hidden');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function loadRotorDetail() {
+  if (!currentLink || !currentLink.rotor_serial) return;
+  const serial = currentLink.rotor_serial;
+  try {
+    const res = await fetch('/api/rotor-balancing/by-serial/' + encodeURIComponent(serial) + '/');
+    const data = await res.json();
+    if (!res.ok) {
+      renderDetail(detailShell('Rotor Balancing', serial, 'settings', section('Record Status', 'info', field('Status', data.detail || 'Rotor balancing record not yet created'), 'text-amber-500'), 'text-blue-500'));
+      return;
+    }
+    const content = [
+      field('Final Result', data.result, true),
+      field('Rotor Type', data.rotor_type),
+      field('Measure Run', data.measure_run),
+      field('Balancing Run', data.balancing_run),
+      field('RPM', data.rpm),
+      field('PL1 [G MM]', data.plane1_weight),
+      field('PL1 [DEG]', data.plane1_degree),
+      field('PL2 [G MM]', data.plane2_weight),
+      field('PL2 [DEG]', data.plane2_degree),
+      field('Recorded At', data.recorded_at),
+      field('Imported At', data.imported_at)
+    ].join('');
+    renderDetail(detailShell('Rotor Balancing', serial, 'settings', section('Balancing Record', 'balance', content, 'text-blue-500'), 'text-blue-500'));
+  } catch (err) {
+    showToast('Unable to load rotor balancing detail', 'error');
+  }
+}
+
+async function loadStatorDetail() {
+  if (!currentLink || !currentLink.stator_serial) return;
+  const serial = currentLink.stator_serial;
+  try {
+    const res = await fetch('/api/stator-testing/by-serial/' + encodeURIComponent(serial) + '/');
+    const data = await res.json();
+    if (!res.ok) {
+      renderDetail(detailShell('Stator Testing', serial, 'bolt', section('Record Status', 'info', field('Status', data.detail || 'Stator testing record not yet created'), 'text-amber-500'), 'text-purple-500'));
+      return;
+    }
+    const summary = [
+      field('Final Result', data.final_result, true),
+      field('Operator', data.operator),
+      field('Code Number', data.code_number),
+      field('Symmetry', data.symmetry),
+      field('Recorded At', data.recorded_at),
+      field('Imported At', data.imported_at)
+    ].join('');
+    const resistance = [
+      field('R/Y Resistance', data.ry),
+      field('R/Y Result', data.ry_result, true),
+      field('Y/B Resistance', data.yb),
+      field('Y/B Result', data.yb_result, true),
+      field('B/R Resistance', data.br),
+      field('B/R Result', data.br_result, true)
+    ].join('');
+    const electrical = [
+      field('THD', data.thd_win),
+      field('THD Result', data.thd_result, true),
+      field('Insulation Res.', data.ir_m_ohms),
+      field('IR Result', data.ir_result, true),
+      field('High Voltage', data.high_voltage),
+      field('HV Result', data.hv_result, true)
+    ].join('');
+    const surge = [
+      field('Surge Voltage', data.surge_voltage),
+      field('Main R/Y Err%', data.surge_main_ry_error),
+      field('R/Y Result', data.surge_ry_result, true),
+      field('Aux Y/B Err%', data.surge_aux_yb_error),
+      field('Y/B Result', data.surge_aux_yb_result, true),
+      field('M-A B/R Err%', data.surge_main_aux_br_error),
+      field('B/R Result', data.surge_main_aux_br_result, true)
+    ].join('');
+    const inductance = [
+      field('Inductance 1', data.inductance_1),
+      field('L1 Result', data.l1_result, true),
+      field('Inductance 2', data.inductance_2),
+      field('L2 Result', data.l2_result, true),
+      field('Inductance 3', data.inductance_3),
+      field('L3 Result', data.l3_result, true)
+    ].join('');
+    renderDetail(detailShell('Stator Testing', serial, 'bolt', [
+      section('Summary', 'info', summary, 'text-purple-500'),
+      section('Resistance Tests', 'electrical_services', resistance, 'text-primary'),
+      section('Electrical Tests', 'dynamic_form', electrical, 'text-primary'),
+      section('Surge Tests', 'analytics', surge, 'text-primary'),
+      section('Inductance Tests', 'rule', inductance, 'text-primary')
+    ].join(''), 'text-purple-500'));
+  } catch (err) {
+    showToast('Unable to load stator testing detail', 'error');
+  }
+}
+
+function closeDetail() {
+  document.getElementById('detail-panel').classList.add('hidden');
+  document.getElementById('detail-panel').innerHTML = '';
+}
+
+document.getElementById('motor-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') searchMotor();
+});
+{% endblock %}

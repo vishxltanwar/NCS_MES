@@ -9,6 +9,7 @@ urlpatterns = [
     path('laser-marking', views.laser_marking_view, name='laser_marking'),
     path('add-part', views.add_part_view, name='add_part'),
     path('traceability', views.traceability_view, name='traceability'),
+    path('traceability/motor', views.motor_traceability_view, name='motor_traceability'),
     path('machine-overview', views.machine_overview_view, name='machine_overview'),
     path('shift-report', views.shift_report_view, name='shift_report'),
     path('production-log', views.production_log_view, name='production_log'),
@@ -26,6 +27,7 @@ urlpatterns = [
     path('api/serials', views.api_serials, name='api_serials'),
     path('api/serials/<int:serial_id>', views.api_delete_serial, name='api_delete_serial'),
     path('api/traceability/search/', views.api_traceability_search, name='api_traceability_search'),
+    path('api/traceability/motor/<str:serial>/', views.api_motor_traceability, name='api_motor_traceability'),
     path('api/mark-done', views.api_mark_done, name='api_mark_done'),
     path('api/stats', views.api_stats, name='api_stats'),
 
@@ -43,11 +45,13 @@ urlpatterns = [
     # ── Rotor Balancing API ───────────────────────────────────────────────────
     path('api/rotor-balancing/import/', views.api_rotor_balancing_import, name='api_rotor_balancing_import'),
     path('api/rotor-balancing/', views.api_rotor_balancing_list, name='api_rotor_balancing_list'),
+    path('api/rotor-balancing/by-serial/<str:serial>/', views.api_rotor_balancing_by_serial, name='api_rotor_balancing_by_serial'),
     path('api/rotor-balancing/<int:pk>/', views.api_rotor_balancing_delete, name='api_rotor_balancing_delete'),
 
     # ── Stator Testing API ───────────────────────────────────────────────────
     path('api/stator-testing/import/', views.api_stator_testing_import, name='api_stator_testing_import'),
     path('api/stator-testing/', views.api_stator_testing_list, name='api_stator_testing_list'),
+    path('api/stator-testing/by-serial/<str:serial>/', views.api_stator_testing_by_serial, name='api_stator_testing_by_serial'),
     path('api/stator-testing/<int:pk>/', views.api_stator_testing_delete, name='api_stator_testing_delete'),
 
     # Motor Assembly API

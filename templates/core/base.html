@@ -159,6 +159,9 @@
             <a {% if active_page == 'trace' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/traceability">
               <span class="material-symbols-outlined text-xl">qr_code_scanner</span> Traceability
             </a>
+            <a {% if active_page == 'motor_traceability' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/traceability/motor">
+              <span class="material-symbols-outlined text-xl">account_tree</span> Motor Traceability
+            </a>
             <a {% if active_page == 'shift' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/shift-report">
               <span class="material-symbols-outlined text-xl">analytics</span> Shift Report
             </a>
@@ -186,7 +189,7 @@
               <span class="material-symbols-outlined text-xl">rule</span> Stator Testing
             </a>
             <a {% if active_page == 'motor_assembly' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-assembly">
-              <span class="material-symbols-outlined text-xl">hub</span> Motor Details
+              <span class="material-symbols-outlined text-xl">hub</span> Motor Assembly
             </a>
           </div>
         </nav>

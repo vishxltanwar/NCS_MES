@@ -85,6 +85,11 @@ def traceability_view(request):
 
 
 @login_required
+def motor_traceability_view(request):
+    return _render_page(request, 'motor_traceability.html', 'motor_traceability')
+
+
+@login_required
 def machine_overview_view(request):
     return _render_page(request, 'machine_overview.html', 'machine_overview')
 
@@ -295,6 +300,62 @@ def api_stats(request):
     })
 
 
+def _rotor_balancing_payload(r):
+    return {
+        'id': r.id,
+        'serial_number': r.serial_number,
+        'result': r.result,
+        'rotor_type': r.rotor_type or '',
+        'measure_run': r.measure_run if r.measure_run is not None else '',
+        'balancing_run': r.balancing_run if r.balancing_run is not None else '',
+        'rpm': r.rpm if r.rpm is not None else '',
+        'plane1_weight': r.plane1_weight if r.plane1_weight is not None else '',
+        'plane1_degree': r.plane1_degree if r.plane1_degree is not None else '',
+        'plane2_weight': r.plane2_weight if r.plane2_weight is not None else '',
+        'plane2_degree': r.plane2_degree if r.plane2_degree is not None else '',
+        'recorded_at': r.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.recorded_at else '',
+        'imported_at': r.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.imported_at else '',
+    }
+
+
+def _stator_testing_payload(r):
+    return {
+        'id': r.id,
+        'serial_number': r.serial_number,
+        'recorded_at': r.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.recorded_at else '',
+        'final_result': r.final_result,
+        'operator': r.operator,
+        'code_number': r.code_number,
+        'symmetry': r.symmetry,
+        'ry': r.ry,
+        'ry_result': r.ry_result,
+        'yb': r.yb,
+        'yb_result': r.yb_result,
+        'br': r.br,
+        'br_result': r.br_result,
+        'thd_win': r.thd_win,
+        'thd_result': r.thd_result,
+        'ir_m_ohms': r.ir_m_ohms,
+        'ir_result': r.ir_result,
+        'high_voltage': r.high_voltage,
+        'hv_result': r.hv_result,
+        'surge_voltage': r.surge_voltage,
+        'surge_main_ry_error': r.surge_main_ry_error,
+        'surge_ry_result': r.surge_ry_result,
+        'surge_aux_yb_error': r.surge_aux_yb_error,
+        'surge_aux_yb_result': r.surge_aux_yb_result,
+        'surge_main_aux_br_error': r.surge_main_aux_br_error,
+        'surge_main_aux_br_result': r.surge_main_aux_br_result,
+        'inductance_1': r.inductance_1,
+        'l1_result': r.l1_result,
+        'inductance_2': r.inductance_2,
+        'l2_result': r.l2_result,
+        'inductance_3': r.inductance_3,
+        'l3_result': r.l3_result,
+        'imported_at': r.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.imported_at else '',
+    }
+
+
 @api_view(['GET'])
 def api_traceability_search(request):
     serial = request.query_params.get('serial', '').strip()
@@ -320,60 +381,12 @@ def api_traceability_search(request):
     # Rotor Balancing
     rotor = RotorBalancing.objects.filter(serial_number__iexact=serial).first()
     if rotor:
-        response_data['rotor_balancing'] = {
-            'id': rotor.id,
-            'serial_number': rotor.serial_number,
-            'result': rotor.result,
-            'rotor_type': rotor.rotor_type or '',
-            'measure_run': rotor.measure_run or '',
-            'balancing_run': rotor.balancing_run or '',
-            'rpm': rotor.rpm or '',
-            'plane1_weight': rotor.plane1_weight,
-            'plane1_degree': rotor.plane1_degree,
-            'plane2_weight': rotor.plane2_weight,
-            'plane2_degree': rotor.plane2_degree,
-            'recorded_at': rotor.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if rotor.recorded_at else '',
-            'imported_at': rotor.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if rotor.imported_at else '',
-        }
+        response_data['rotor_balancing'] = _rotor_balancing_payload(rotor)
         
     # Stator Testing
     stator = StatorTestingRecord.objects.filter(serial_number__iexact=serial).first()
     if stator:
-        response_data['stator_testing'] = {
-            'id': stator.id,
-            'serial_number': stator.serial_number,
-            'final_result': stator.final_result,
-            'operator': stator.operator,
-            'code_number': stator.code_number,
-            'symmetry': stator.symmetry,
-            'ry': stator.ry,
-            'ry_result': stator.ry_result,
-            'yb': stator.yb,
-            'yb_result': stator.yb_result,
-            'br': stator.br,
-            'br_result': stator.br_result,
-            'thd_win': stator.thd_win,
-            'thd_result': stator.thd_result,
-            'ir_m_ohms': stator.ir_m_ohms,
-            'ir_result': stator.ir_result,
-            'high_voltage': stator.high_voltage,
-            'hv_result': stator.hv_result,
-            'surge_voltage': stator.surge_voltage,
-            'surge_main_ry_error': stator.surge_main_ry_error,
-            'surge_ry_result': stator.surge_ry_result,
-            'surge_aux_yb_error': stator.surge_aux_yb_error,
-            'surge_aux_yb_result': stator.surge_aux_yb_result,
-            'surge_main_aux_br_error': stator.surge_main_aux_br_error,
-            'surge_main_aux_br_result': stator.surge_main_aux_br_result,
-            'inductance_1': stator.inductance_1,
-            'l1_result': stator.l1_result,
-            'inductance_2': stator.inductance_2,
-            'l2_result': stator.l2_result,
-            'inductance_3': stator.inductance_3,
-            'l3_result': stator.l3_result,
-            'recorded_at': stator.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if stator.recorded_at else '',
-            'imported_at': stator.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if stator.imported_at else '',
-        }
+        response_data['stator_testing'] = _stator_testing_payload(stator)
         
     # Magnet Insertion
     magnet = MagnetInsertion.objects.filter(stack_serial__iexact=serial).first()
@@ -743,24 +756,23 @@ def api_rotor_balancing_import(request):
 @api_view(['GET'])
 def api_rotor_balancing_list(request):
     records = RotorBalancing.objects.all().order_by('-imported_at')[:200]
-    data = []
-    for r in records:
-        data.append({
-            'id': r.id,
-            'serial_number': r.serial_number,
-            'result': r.result,
-            'rotor_type': r.rotor_type or '',
-            'measure_run': r.measure_run or '',
-            'balancing_run': r.balancing_run or '',
-            'rpm': r.rpm or '',
-            'plane1_weight': r.plane1_weight if r.plane1_weight is not None else '',
-            'plane1_degree': r.plane1_degree if r.plane1_degree is not None else '',
-            'plane2_weight': r.plane2_weight if r.plane2_weight is not None else '',
-            'plane2_degree': r.plane2_degree if r.plane2_degree is not None else '',
-            'recorded_at': r.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.recorded_at else '',
-            'imported_at': r.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.imported_at else ''
-        })
-    return Response(data)
+    return Response([_rotor_balancing_payload(r) for r in records])
+
+
+@api_view(['GET'])
+def api_rotor_balancing_by_serial(request, serial):
+    serial = serial.strip()
+    if not serial:
+        return Response({'detail': 'Rotor serial is required', 'code': 'serial_required'}, status=400)
+
+    record = RotorBalancing.objects.filter(serial_number__iexact=serial).first()
+    if not record:
+        return Response({
+            'detail': 'Rotor balancing record not yet created',
+            'code': 'rotor_balancing_not_created',
+        }, status=404)
+
+    return Response(_rotor_balancing_payload(record))
 
 @api_view(['DELETE'])
 def api_rotor_balancing_delete(request, pk):
@@ -948,44 +960,23 @@ def api_stator_testing_import(request):
 @api_view(['GET'])
 def api_stator_testing_list(request):
     records = StatorTestingRecord.objects.all().order_by('-imported_at')[:200]
-    data = []
-    for r in records:
-        data.append({
-            'id': r.id,
-            'serial_number': r.serial_number,
-            'recorded_at': r.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.recorded_at else '',
-            'final_result': r.final_result,
-            'operator': r.operator,
-            'code_number': r.code_number,
-            'symmetry': r.symmetry,
-            'ry': r.ry,
-            'ry_result': r.ry_result,
-            'yb': r.yb,
-            'yb_result': r.yb_result,
-            'br': r.br,
-            'br_result': r.br_result,
-            'thd_win': r.thd_win,
-            'thd_result': r.thd_result,
-            'ir_m_ohms': r.ir_m_ohms,
-            'ir_result': r.ir_result,
-            'high_voltage': r.high_voltage,
-            'hv_result': r.hv_result,
-            'surge_voltage': r.surge_voltage,
-            'surge_main_ry_error': r.surge_main_ry_error,
-            'surge_ry_result': r.surge_ry_result,
-            'surge_aux_yb_error': r.surge_aux_yb_error,
-            'surge_aux_yb_result': r.surge_aux_yb_result,
-            'surge_main_aux_br_error': r.surge_main_aux_br_error,
-            'surge_main_aux_br_result': r.surge_main_aux_br_result,
-            'inductance_1': r.inductance_1,
-            'l1_result': r.l1_result,
-            'inductance_2': r.inductance_2,
-            'l2_result': r.l2_result,
-            'inductance_3': r.inductance_3,
-            'l3_result': r.l3_result,
-            'imported_at': r.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.imported_at else ''
-        })
-    return Response(data)
+    return Response([_stator_testing_payload(r) for r in records])
+
+
+@api_view(['GET'])
+def api_stator_testing_by_serial(request, serial):
+    serial = serial.strip()
+    if not serial:
+        return Response({'detail': 'Stator serial is required', 'code': 'serial_required'}, status=400)
+
+    record = StatorTestingRecord.objects.filter(serial_number__iexact=serial).first()
+    if not record:
+        return Response({
+            'detail': 'Stator testing record not yet created',
+            'code': 'stator_testing_not_created',
+        }, status=404)
+
+    return Response(_stator_testing_payload(record))
 
 @api_view(['DELETE'])
 def api_stator_testing_delete(request, pk):
@@ -1021,6 +1012,51 @@ def _master_serial_for_part(serial_number, part_type):
         return part.serial_number
 
     return None
+
+
+@api_view(['GET'])
+def api_motor_traceability(request, serial):
+    motor_serial = serial.strip()
+    if not motor_serial:
+        return Response({'detail': 'Motor serial is required', 'code': 'serial_required'}, status=400)
+
+    link = MotorAssembly.objects.filter(motor_serial__iexact=motor_serial).first()
+    if not link:
+        canonical_motor = _master_serial_for_part(motor_serial, 'Motor')
+        if not canonical_motor:
+            return Response({
+                'detail': 'Motor not found',
+                'code': 'motor_not_found',
+            }, status=404)
+        return Response({
+            'detail': 'Rotor/Stator link missing for this motor',
+            'code': 'rotor_stator_link_missing',
+            'motor_serial': canonical_motor,
+        }, status=404)
+
+    if not link.rotor_serial or not link.stator_serial:
+        return Response({
+            'detail': 'Rotor/Stator link missing for this motor',
+            'code': 'rotor_stator_link_missing',
+            'motor_serial': link.motor_serial,
+            'rotor_serial': link.rotor_serial,
+            'stator_serial': link.stator_serial,
+        }, status=404)
+
+    rotor = RotorBalancing.objects.filter(serial_number__iexact=link.rotor_serial).first()
+    stator = StatorTestingRecord.objects.filter(serial_number__iexact=link.stator_serial).first()
+
+    return Response({
+        'motor_serial': link.motor_serial,
+        'rotor_serial': link.rotor_serial,
+        'stator_serial': link.stator_serial,
+        'rotor_balancing_created': bool(rotor),
+        'stator_testing_created': bool(stator),
+        'rotor_result': rotor.result if rotor else '',
+        'stator_result': stator.final_result if stator else '',
+        'linked_at': link.created_at.astimezone(IST).isoformat() if link.created_at else '',
+        'updated_at': link.updated_at.astimezone(IST).isoformat() if link.updated_at else '',
+    })
 
 
 def _motor_assembly_payload(record):

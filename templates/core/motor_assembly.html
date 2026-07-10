@@ -8,10 +8,10 @@
       <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
         <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
         <span class="material-symbols-outlined text-sm">chevron_right</span>
-        <span class="text-primary">Motor Details</span>
+        <span class="text-primary">Motor Assembly</span>
       </nav>
-      <h2 class="text-2xl font-bold text-slate-900">Motor Details</h2>
-      <p class="text-sm text-slate-500 mt-0.5">Link Motor Sr No to Rotor Sr No and Stator Sr No</p>
+      <h2 class="text-2xl font-bold text-slate-900">Motor Assembly</h2>
+      <p class="text-sm text-slate-500 mt-0.5">Link Motor to Rotor and Stator</p>
     </div>
     <button onclick="loadLinks()" class="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:text-primary transition-all border border-slate-200 shadow-sm">
       <span class="material-symbols-outlined text-lg">refresh</span> Refresh
@@ -26,19 +26,19 @@
       </div>
       <form id="assembly-form" class="p-5 space-y-4" onsubmit="submitLink(event)">
         <div>
-          <label for="motor-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Motor Sr No</label>
+          <label for="motor-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Motor Serial Number</label>
           <input id="motor-serial" name="motor_serial" autocomplete="off"
             class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm font-semibold text-slate-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
             placeholder="Scan or enter motor serial">
         </div>
         <div>
-          <label for="rotor-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Rotor Sr No</label>
+          <label for="rotor-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Rotor Serial Number</label>
           <input id="rotor-serial" name="rotor_serial" autocomplete="off"
             class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm font-semibold text-slate-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
             placeholder="Scan or enter rotor serial">
         </div>
         <div>
-          <label for="stator-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Stator Sr No</label>
+          <label for="stator-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Stator Serial Number</label>
           <input id="stator-serial" name="stator_serial" autocomplete="off"
             class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm font-semibold text-slate-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
             placeholder="Scan or enter stator serial">
