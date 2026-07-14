@@ -10,12 +10,19 @@
       <span class="material-symbols-outlined text-sm">chevron_right</span>
       <span class="text-primary">Part Traceability</span>
     </nav>
-    <h2 class="text-2xl font-bold text-slate-900">Serial Traceability Search</h2>
+    <div class="flex items-center justify-between gap-4">
+      <h2 class="text-2xl font-bold text-slate-900">Serial Traceability Search</h2>
+      <div id="scanner-indicator"
+        class="inline-flex items-center gap-2 rounded-full border border-green-200 bg-green-50 px-3 py-1 text-xs font-bold text-green-700">
+        <span class="h-2 w-2 rounded-full bg-green-500"></span>
+        Scanner Active
+      </div>
+    </div>
     <p class="text-slate-500 text-sm mt-1">Search any serial number to view its full production record.</p>
   </div>
 
   <!-- Search -->
-  <div
+  <div id="trace-search-box"
     class="relative flex items-center bg-white border-2 border-slate-200 rounded-2xl overflow-hidden shadow-lg focus-within:border-primary transition-all">
     <span class="material-symbols-outlined ml-5 text-slate-400 text-2xl">search</span>
     <input id="trace-input" type="text" placeholder="Enter or paste a serial number..."
@@ -143,13 +150,23 @@ return `
 }
 
 async function searchSerialStr(sn) {
-  document.getElementById('trace-input').value = sn;
+  document.getElementById('trace-input').value = cleanScanData(sn);
   await searchSerial();
 }
 
+function cleanScanData(raw) {
+  return String(raw || '')
+    .replace(/\x00/g, '')
+    .replace(/[\r\n]/g, '')
+    .trim()
+    .replace(/ {2,}/g, ' ');
+}
+
 async function searchSerial() {
-const q = document.getElementById('trace-input').value.trim().toUpperCase();
+const input = document.getElementById('trace-input');
+const q = cleanScanData(input.value).toUpperCase();
 if (!q) return;
+input.value = q;
 document.getElementById('placeholder-msg').style.display = 'none';
 document.getElementById('not-found').style.display = 'none';
 document.getElementById('detail-area').classList.add('hidden');
@@ -327,4 +344,66 @@ document.getElementById('placeholder-msg').style.display = 'flex';
 document.getElementById('trace-input').addEventListener('keydown', e => {
 if (e.key === 'Enter') searchSerial();
 });
+
+let scannerPollTimer = null;
+let scannerPollInFlight = false;
+
+function flashScannerInput() {
+  const input = document.getElementById('trace-input');
+  const box = document.getElementById('trace-search-box');
+
+  input.classList.add('bg-green-50');
+  box.classList.add('border-green-400', 'shadow-green-100');
+
+  setTimeout(() => {
+    input.classList.remove('bg-green-50');
+    box.classList.remove('border-green-400', 'shadow-green-100');
+  }, 450);
+}
+
+async function pollScanner() {
+  if (scannerPollInFlight || document.visibilityState !== 'visible') return;
+  scannerPollInFlight = true;
+
+  try {
+    const res = await fetch('/api/scanner/poll/');
+    if (!res.ok) return;
+
+    const payload = await res.json();
+    if (!payload.received) return;
+
+    const cleaned = cleanScanData(payload.data);
+    if (!cleaned) return;
+
+    document.getElementById('trace-input').value = cleaned;
+    flashScannerInput();
+    await searchSerial();
+  } catch (err) {
+    // Keep polling after transient scanner or COM port errors.
+  } finally {
+    scannerPollInFlight = false;
+  }
+}
+
+function startScannerPolling() {
+  if (scannerPollTimer || document.visibilityState !== 'visible') return;
+  pollScanner();
+  scannerPollTimer = setInterval(pollScanner, 1000);
+}
+
+function stopScannerPolling() {
+  if (!scannerPollTimer) return;
+  clearInterval(scannerPollTimer);
+  scannerPollTimer = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    startScannerPolling();
+  } else {
+    stopScannerPolling();
+  }
+});
+
+startScannerPolling();
 {% endblock %}

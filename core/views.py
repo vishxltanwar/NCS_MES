@@ -5,10 +5,11 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from django.conf import settings
 from django.contrib.staticfiles import finders
-from django.http import Http404, HttpResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_GET
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -27,6 +28,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from utils.scanner import clean_scan_data
 from .models import Serial, Part, RotorBalancing, StatorTestingRecord, MotorAssembly, MagnetInsertion
 from .rbac import (
     allowed_pages,
@@ -678,7 +680,7 @@ def motor_traceability_pdf_view(request, motor_sr_no):
 @api_view(['GET'])
 @api_access_required('traceability_read')
 def api_traceability_search(request):
-    serial = request.query_params.get('serial', '').strip()
+    serial = clean_scan_data(request.query_params.get('serial', ''))
     if not serial:
         return Response({'detail': 'serial parameter is required'}, status=400)
     
@@ -727,6 +729,20 @@ def api_traceability_search(request):
         return Response({'detail': 'No Record Found'}, status=404)
         
     return Response(response_data)
+
+
+@require_GET
+def api_scanner_poll(request):
+    try:
+        from utils.serial_reader import read_scan_line
+
+        cleaned_value = read_scan_line(port="COM1", baudrate=115200, timeout=1)
+        if cleaned_value:
+            return JsonResponse({"data": cleaned_value, "received": True})
+
+        return JsonResponse({"received": False})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

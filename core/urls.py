@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/generate', views.api_generate, name='api_generate'),
     path('api/serials', views.api_serials, name='api_serials'),
     path('api/serials/<int:serial_id>', views.api_delete_serial, name='api_delete_serial'),
+    path('api/scanner/poll/', views.api_scanner_poll, name='api_scanner_poll'),
     path('api/traceability/search/', views.api_traceability_search, name='api_traceability_search'),
     path('api/traceability/motor/<str:serial>/', views.api_motor_traceability, name='api_motor_traceability'),
     path('api/mark-done', views.api_mark_done, name='api_mark_done'),
