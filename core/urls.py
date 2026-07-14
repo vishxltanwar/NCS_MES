@@ -10,6 +10,7 @@ urlpatterns = [
     path('add-part', views.add_part_view, name='add_part'),
     path('traceability', views.traceability_view, name='traceability'),
     path('traceability/motor', views.motor_traceability_view, name='motor_traceability'),
+    path('motor-traceability/<str:motor_sr_no>/pdf/', views.motor_traceability_pdf_view, name='motor_traceability_pdf'),
     path('machine-overview', views.machine_overview_view, name='machine_overview'),
     path('shift-report', views.shift_report_view, name='shift_report'),
     path('production-log', views.production_log_view, name='production_log'),

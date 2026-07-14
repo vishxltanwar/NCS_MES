@@ -14,7 +14,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-napino-mes-secret-key-chan
 
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', '*').split(',') if host.strip()]
 
 # ── Installed apps ────────────────────────────────────────────────────────────
 INSTALLED_APPS = [
@@ -103,17 +103,20 @@ USE_TZ = True
 # ── Static files ──────────────────────────────────────────────────────────────
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # ── Default PK ────────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# ── Sessions (in-memory — cleared on server restart) ─────────────────────────
+# ── Caching & Sessions ────────────────────────────────────────────────────────
+# In production, consider using Redis (django-redis) instead of LocMemCache.
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
     }
 }
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+# Removed SESSION_ENGINE cache backend to default to database-backed sessions,
+# which are required for multi-worker production deployments.
 
 # ── Login redirect ────────────────────────────────────────────────────────────
 LOGIN_URL = '/'

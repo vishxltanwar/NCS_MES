@@ -9,6 +9,8 @@ class MotorTraceabilityApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.user = User.objects.create_user(username='tester', password='secret')
+        self.user.profile.role = 'admin'
+        self.user.profile.save()
         self.client.force_authenticate(user=self.user)
 
     def create_serial(self, serial_number, part_type):

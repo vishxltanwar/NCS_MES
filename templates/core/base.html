@@ -7,6 +7,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}NAPINO CONTROL SYSTEMS{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{% static 'images/ncs_logo.png' %}">
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
     rel="stylesheet" />
@@ -132,7 +133,7 @@
           </div>
           <div class="hidden sm:block">
             <p class="text-xs font-bold text-slate-900 leading-tight">{{ user.full_name|default:"Operator" }}</p>
-            <p class="text-[10px] text-slate-400 font-medium">{{ user.role|default:""|title }}</p>
+            <p class="text-[10px] text-slate-400 font-medium">{{ user.designation|default:""|title }}</p>
           </div>
         </div>
         <button onclick="handleLogout()"
@@ -150,47 +151,47 @@
         <nav class="flex flex-col flex-1 py-5 overflow-y-auto">
           <p class="px-6 mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Operations</p>
           <div class="space-y-0.5">
-            <a {% if active_page == 'dashboard' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/dashboard">
+            {% if allowed_pages.dashboard %}<a {% if active_page == 'dashboard' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/dashboard">
               <span class="material-symbols-outlined text-xl">dashboard</span> Overview
-            </a>
-            <a {% if active_page == 'add_part' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/add-part">
+            </a>{% endif %}
+            {% if allowed_pages.add_part %}<a {% if active_page == 'add_part' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/add-part">
               <span class="material-symbols-outlined text-xl">qr_code_2</span> Add Part
-            </a>
-            <a {% if active_page == 'trace' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/traceability">
+            </a>{% endif %}
+            {% if allowed_pages.trace %}<a {% if active_page == 'trace' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/traceability">
               <span class="material-symbols-outlined text-xl">qr_code_scanner</span> Traceability
-            </a>
-            <a {% if active_page == 'motor_traceability' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/traceability/motor">
+            </a>{% endif %}
+            {% if allowed_pages.motor_traceability %}<a {% if active_page == 'motor_traceability' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/traceability/motor">
               <span class="material-symbols-outlined text-xl">account_tree</span> Motor Traceability
-            </a>
-            <a {% if active_page == 'shift' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/shift-report">
+            </a>{% endif %}
+            {% if allowed_pages.shift %}<a {% if active_page == 'shift' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/shift-report">
               <span class="material-symbols-outlined text-xl">analytics</span> Shift Report
-            </a>
-            <a {% if active_page == 'production_log' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %}
+            </a>{% endif %}
+            {% if allowed_pages.production_log %}<a {% if active_page == 'production_log' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %}
               href="/production-log">
               <span class="material-symbols-outlined text-xl">insert_chart</span> Production Log
-            </a>
+            </a>{% endif %}
           </div>
           <p class="px-6 mt-6 mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Machines Overview</p>
           <div class="space-y-0.5">
-            <a {% if active_page == 'machine_overview' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %}
+            {% if allowed_pages.machine_overview %}<a {% if active_page == 'machine_overview' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %}
               href="/machine-overview">
               <span class="material-symbols-outlined text-xl">precision_manufacturing</span> Machine Overview
-            </a>
-            <a {% if active_page == 'laser' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/laser-marking">
+            </a>{% endif %}
+            {% if allowed_pages.laser %}<a {% if active_page == 'laser' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/laser-marking">
               <span class="material-symbols-outlined text-xl">highlight</span> Laser Marking
-            </a>
-            <a {% if active_page == 'magnet_insertion' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/magnet-insertion">
+            </a>{% endif %}
+            {% if allowed_pages.magnet_insertion %}<a {% if active_page == 'magnet_insertion' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/magnet-insertion">
               <span class="material-symbols-outlined text-xl">widgets</span> Magnet Insertion
-            </a>
-            <a {% if active_page == 'rotor_balancing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-balancing">
+            </a>{% endif %}
+            {% if allowed_pages.rotor_balancing %}<a {% if active_page == 'rotor_balancing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-balancing">
               <span class="material-symbols-outlined text-xl">balance</span> Rotor Balancing
-            </a>
-            <a {% if active_page == 'stator_testing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-testing">
+            </a>{% endif %}
+            {% if allowed_pages.stator_testing %}<a {% if active_page == 'stator_testing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-testing">
               <span class="material-symbols-outlined text-xl">rule</span> Stator Testing
-            </a>
-            <a {% if active_page == 'motor_assembly' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-assembly">
+            </a>{% endif %}
+            {% if allowed_pages.motor_assembly %}<a {% if active_page == 'motor_assembly' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-assembly">
               <span class="material-symbols-outlined text-xl">hub</span> Motor Assembly
-            </a>
+            </a>{% endif %}
           </div>
         </nav>
         <div class="p-4 border-t border-slate-200">

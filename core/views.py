@@ -1,6 +1,11 @@
 # core/views.py
 # Napino MES — All page views + DRF API views
+from io import BytesIO
+import re
 from datetime import date, datetime, timedelta, timezone
+from django.conf import settings
+from django.contrib.staticfiles import finders
+from django.http import Http404, HttpResponse
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
@@ -8,6 +13,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+import logging
 import openpyxl
 import pandas as pd
 import datetime as dt
@@ -15,7 +21,24 @@ from django.utils import timezone as django_tz
 from pymodbus.client import ModbusTcpClient
 import struct
 from django.db import IntegrityError, models, transaction
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from .models import Serial, Part, RotorBalancing, StatorTestingRecord, MotorAssembly, MagnetInsertion
+from .rbac import (
+    allowed_pages,
+    api_access_required,
+    can_access_action,
+    first_allowed_url,
+    page_access_required,
+    user_role,
+    user_station,
+)
+
+logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -27,7 +50,7 @@ def write_to_shared_file(serial: str) -> None:
     try:
         with open(LASER_SERIAL_FILE, "w", encoding="utf-8", newline="") as f:
             f.write(serial)
-    except Exception:
+    except OSError:
         pass  # On localhost dev, shared drive won't exist
 
 
@@ -36,7 +59,7 @@ def generate_serial(part_number: str, line_no: str, shift: str) -> str:
     """
     Format: PPPPP + LL + S + YYDDD + NNN  (3-digit sequence)
     """
-    today = date.today()
+    today = django_tz.localdate()
     yy = today.strftime("%y")
     ddd = today.strftime("%j")
     date_str = f"{yy}{ddd}"
@@ -54,82 +77,92 @@ def generate_serial(part_number: str, line_no: str, shift: str) -> str:
 
 def _render_page(request, template_name, active_page):
     user = _user_ctx(request.user)
-    return render(request, f'core/{template_name}', {'user': user, 'active_page': active_page})
+    return render(request, f'core/{template_name}', {
+        'user': user,
+        'active_page': active_page,
+        'allowed_pages': allowed_pages(request.user),
+    })
 
 # ── Page Views ────────────────────────────────────────────────────────────────
 
 def root_view(request):
     if request.user.is_authenticated:
-        return redirect('/dashboard')
+        return redirect(first_allowed_url(request.user) or '/dashboard')
     return render(request, 'core/login.html', {'error': None})
 
 
-@login_required
+@page_access_required('dashboard')
 def dashboard_view(request):
     return _render_page(request, 'dashboard.html', 'dashboard')
 
 
-@login_required
+@page_access_required('laser')
 def laser_marking_view(request):
     return _render_page(request, 'laser_marking.html', 'laser')
 
 
-@login_required
+@page_access_required('add_part')
 def add_part_view(request):
     return _render_page(request, 'add_part.html', 'add_part')
 
 
-@login_required
+@page_access_required('trace')
 def traceability_view(request):
     return _render_page(request, 'traceability.html', 'trace')
 
 
-@login_required
+@page_access_required('motor_traceability')
 def motor_traceability_view(request):
     return _render_page(request, 'motor_traceability.html', 'motor_traceability')
 
 
-@login_required
+@page_access_required('machine_overview')
 def machine_overview_view(request):
     return _render_page(request, 'machine_overview.html', 'machine_overview')
 
 
-@login_required
+@page_access_required('shift')
 def shift_report_view(request):
     return _render_page(request, 'shift_report.html', 'shift')
 
 
-@login_required
+@page_access_required('production_log')
 def production_log_view(request):
     return _render_page(request, 'production_log.html', 'production_log')
 
 
-@login_required
+@page_access_required('rotor_balancing')
 def rotor_balancing_view(request):
     return _render_page(request, 'rotor_balancing.html', 'rotor_balancing')
 
 
-@login_required
+@page_access_required('stator_testing')
 def stator_testing_view(request):
     return _render_page(request, 'stator_testing.html', 'stator_testing')
 
 
-@login_required
+@page_access_required('magnet_insertion')
 def magnet_insertion_view(request):
     return _render_page(request, 'magnet_insertion.html', 'magnet_insertion')
 
 
-@login_required
+@page_access_required('motor_assembly')
 def motor_assembly_view(request):
     return _render_page(request, 'motor_assembly.html', 'motor_assembly')
 
 
 def _user_ctx(user):
     """Build a user context dict matching the old FastAPI session dict."""
+    designation = ''
+    if hasattr(user, 'profile'):
+        designation = user.profile.designation or ''
+
     return {
         'username': user.username,
         'full_name': user.get_full_name() or user.username,
-        'role': getattr(user, 'profile_role', 'operator') if hasattr(user, 'profile_role') else (user.first_name and 'Graduate Engineering Trainee' or 'operator'),
+        'role': user_role(user),
+        'station': user_station(user),
+        'designation': designation,
     }
 
 
@@ -149,7 +182,11 @@ def api_login(request):
 
     login(request, user)
     full_name = user.get_full_name() or user.username
-    return Response({'status': 'ok', 'full_name': full_name})
+    return Response({
+        'status': 'ok',
+        'full_name': full_name,
+        'next_url': first_allowed_url(user) or '/dashboard',
+    })
 
 
 @api_view(['POST'])
@@ -164,6 +201,7 @@ def api_logout(request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_view(['POST'])
+@api_access_required('laser_write')
 def api_generate(request):
     part_number = request.data.get('part_number', '')
     line_no = request.data.get('line_no', '')
@@ -200,6 +238,7 @@ def api_generate(request):
 
 
 @api_view(['GET'])
+@api_access_required('serials_read')
 def api_serials(request):
     serials = Serial.objects.all().order_by('-created_at')[:100]
     data = []
@@ -238,6 +277,7 @@ def api_serials(request):
 
 
 @api_view(['DELETE'])
+@api_access_required('serial_delete')
 def api_delete_serial(request, serial_id):
     try:
         serial = Serial.objects.get(id=serial_id)
@@ -248,6 +288,7 @@ def api_delete_serial(request, serial_id):
 
 
 @api_view(['POST'])
+@api_access_required('mark_done')
 def api_mark_done(request):
     serial = request.data.get('serial', '')
     try:
@@ -261,8 +302,9 @@ def api_mark_done(request):
 
 
 @api_view(['GET'])
+@api_access_required('stats')
 def api_stats(request):
-    today = date.today()
+    today = django_tz.localdate()
     total_today = Serial.objects.filter(created_at__date=today).count()
     marked_today = Serial.objects.filter(created_at__date=today, status='Marked').count()
     pending_today = Serial.objects.filter(created_at__date=today, status='Pending').count()
@@ -356,7 +398,285 @@ def _stator_testing_payload(r):
     }
 
 
+def _display_value(value):
+    if value is None or value == '':
+        return '-'
+    if isinstance(value, datetime):
+        return value.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S')
+    if isinstance(value, date):
+        return value.strftime('%Y-%m-%d')
+    if isinstance(value, bool):
+        return 'PASS' if value else 'FAIL'
+    return str(value)
+
+
+def _model_field_rows(instance, exclude=()):
+    rows = []
+    excluded = set(exclude)
+    for field in instance._meta.fields:
+        if field.name in excluded:
+            continue
+        rows.append((field.verbose_name.title(), _display_value(getattr(instance, field.name))))
+    return rows
+
+
+def _status_color(value):
+    text = str(value or '').strip().lower()
+    if text in ('pass', 'ok', 'true'):
+        return colors.HexColor('#166534')
+    if text in ('fail', 'false', 'ng'):
+        return colors.HexColor('#991b1b')
+    return colors.HexColor('#334155')
+
+
+def _safe_pdf_filename(value):
+    serial = re.sub(r'[^A-Za-z0-9._-]+', '_', value.strip()).strip('._-')
+    return serial or 'motor'
+
+
+class _TraceabilityCanvas:
+    def __init__(self, *args, **kwargs):
+        from reportlab.pdfgen import canvas
+        self._canvas_cls = canvas.Canvas
+        self._args = args
+        self._kwargs = kwargs
+        self._pages = []
+        self._canvas = self._canvas_cls(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._canvas, name)
+
+    def showPage(self):
+        self._pages.append(dict(self._canvas.__dict__))
+        self._canvas._startPage()
+
+    def save(self):
+        page_count = len(self._pages) + 1
+        self._pages.append(dict(self._canvas.__dict__))
+        for state in self._pages:
+            self._canvas.__dict__.update(state)
+            self._draw_footer(page_count)
+            self._canvas.showPage()
+        self._canvas.save()
+
+    def _draw_footer(self, page_count):
+        self._canvas.saveState()
+        self._canvas.setStrokeColor(colors.HexColor('#cbd5e1'))
+        self._canvas.line(15 * mm, 14 * mm, 195 * mm, 14 * mm)
+        self._canvas.setFont('Helvetica', 7)
+        self._canvas.setFillColor(colors.HexColor('#64748b'))
+        self._canvas.drawString(15 * mm, 9 * mm, 'Napino Control Systems Pvt. Ltd.')
+        self._canvas.drawRightString(195 * mm, 9 * mm, f'Page {self._canvas.getPageNumber()} of {page_count}')
+        self._canvas.restoreState()
+
+
+def _section_heading(text, styles):
+    return Paragraph(text, styles['SectionHeading'])
+
+
+def _details_table(rows, styles, col_widths=None):
+    if not rows:
+        rows = [('Status', 'Record not available')]
+
+    table_data = []
+    for label, value in rows:
+        table_data.append([
+            Paragraph(str(label), styles['FieldLabel']),
+            Paragraph(_display_value(value), styles['FieldValue']),
+        ])
+
+    table = Table(table_data, colWidths=col_widths or [52 * mm, 118 * mm], hAlign='LEFT')
+    table.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#cbd5e1')),
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f8fafc')),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 7),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+    ]))
+    return table
+
+
+def _result_summary_table(link, rotor, stator, styles):
+    data = [
+        [
+            Paragraph('Motor Sr No', styles['SummaryLabel']),
+            Paragraph('Rotor Sr No', styles['SummaryLabel']),
+            Paragraph('Rotor Result', styles['SummaryLabel']),
+            Paragraph('Stator Sr No', styles['SummaryLabel']),
+            Paragraph('Stator Result', styles['SummaryLabel']),
+        ],
+        [
+            Paragraph(link.motor_serial, styles['SummaryValue']),
+            Paragraph(link.rotor_serial, styles['SummaryValue']),
+            Paragraph(rotor.result if rotor else 'Pending', styles['SummaryValue']),
+            Paragraph(link.stator_serial, styles['SummaryValue']),
+            Paragraph(stator.final_result if stator else 'Pending', styles['SummaryValue']),
+        ],
+    ]
+    table = Table(data, colWidths=[35 * mm, 35 * mm, 30 * mm, 35 * mm, 35 * mm], hAlign='LEFT')
+    table.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.45, colors.HexColor('#94a3b8')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('TOPPADDING', (0, 0), (-1, -1), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+        ('TEXTCOLOR', (2, 1), (2, 1), _status_color(rotor.result if rotor else '')),
+        ('TEXTCOLOR', (4, 1), (4, 1), _status_color(stator.final_result if stator else '')),
+    ]))
+    return table
+
+
+def _pdf_styles():
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name='CompanyTitle',
+        parent=styles['Title'],
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+        fontSize=19,
+        leading=23,
+        textColor=colors.HexColor('#0f172a'),
+        spaceAfter=2,
+    ))
+    styles.add(ParagraphStyle(
+        name='CertificateTitle',
+        parent=styles['Heading2'],
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor('#475569'),
+        spaceAfter=12,
+    ))
+    styles.add(ParagraphStyle(
+        name='SectionHeading',
+        parent=styles['Heading3'],
+        fontName='Helvetica-Bold',
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor('#1e293b'),
+        spaceBefore=10,
+        spaceAfter=6,
+    ))
+    styles.add(ParagraphStyle(
+        name='FieldLabel',
+        parent=styles['BodyText'],
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#475569'),
+    ))
+    styles.add(ParagraphStyle(
+        name='FieldValue',
+        parent=styles['BodyText'],
+        fontName='Helvetica',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#0f172a'),
+    ))
+    styles.add(ParagraphStyle(
+        name='SummaryLabel',
+        parent=styles['BodyText'],
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+        fontSize=7,
+        leading=9,
+        textColor=colors.white,
+    ))
+    styles.add(ParagraphStyle(
+        name='SummaryValue',
+        parent=styles['BodyText'],
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#0f172a'),
+    ))
+    styles.add(ParagraphStyle(
+        name='MetaText',
+        parent=styles['BodyText'],
+        alignment=TA_RIGHT,
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#64748b'),
+    ))
+    return styles
+
+
+def _logo_flowable():
+    logo_path = finders.find('images/ncs_logo.png') or str(settings.BASE_DIR / 'static' / 'images' / 'ncs_logo.png')
+    try:
+        return Image(logo_path, width=34 * mm, height=17 * mm, kind='proportional')
+    except Exception:
+        return Spacer(1, 17 * mm)
+
+
+def _build_motor_traceability_pdf(link, rotor, stator):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=15 * mm,
+        leftMargin=15 * mm,
+        topMargin=13 * mm,
+        bottomMargin=20 * mm,
+        title=f'Motor Traceability {link.motor_serial}',
+    )
+    styles = _pdf_styles()
+    story = [
+        _logo_flowable(),
+        Paragraph('Napino Control Systems', styles['CompanyTitle']),
+        Paragraph('EVR Motor Traceability Certificate', styles['CertificateTitle']),
+        _result_summary_table(link, rotor, stator, styles),
+    ]
+
+    master_serial = Serial.objects.filter(serial_number__iexact=link.motor_serial).first()
+    master_part = Part.objects.filter(serial_number__iexact=link.motor_serial).first()
+    motor_rows = _model_field_rows(link, exclude=('id',))
+    if master_serial:
+        motor_rows.extend(_model_field_rows(master_serial, exclude=('id', 'serial_number')))
+    if master_part:
+        motor_rows.extend([(f'Part {label}', value) for label, value in _model_field_rows(master_part, exclude=('id', 'serial_number'))])
+
+    story.extend([
+        _section_heading('Motor Details', styles),
+        _details_table(motor_rows, styles),
+        _section_heading('Rotor Details', styles),
+        _details_table(_model_field_rows(rotor, exclude=('id',)) if rotor else [('Status', 'Rotor balancing record not yet created')], styles),
+        _section_heading('Stator Details', styles),
+        _details_table(_model_field_rows(stator, exclude=('id',)) if stator else [('Status', 'Stator testing record not yet created')], styles),
+    ])
+
+    doc.build(story, canvasmaker=_TraceabilityCanvas)
+    buffer.seek(0)
+    return buffer
+
+
+@page_access_required('motor_traceability')
+def motor_traceability_pdf_view(request, motor_sr_no):
+    motor_serial = motor_sr_no.strip()
+    link = MotorAssembly.objects.filter(motor_serial__iexact=motor_serial).first()
+    if not link:
+        raise Http404('Motor traceability record not found')
+    if not link.rotor_serial or not link.stator_serial:
+        raise Http404('Rotor/Stator link missing for this motor')
+
+    rotor = RotorBalancing.objects.filter(serial_number__iexact=link.rotor_serial).first()
+    stator = StatorTestingRecord.objects.filter(serial_number__iexact=link.stator_serial).first()
+    pdf = _build_motor_traceability_pdf(link, rotor, stator)
+
+    filename = f"MotorTraceability_{_safe_pdf_filename(link.motor_serial)}.pdf"
+    response = HttpResponse(pdf.getvalue(), content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
 @api_view(['GET'])
+@api_access_required('traceability_read')
 def api_traceability_search(request):
     serial = request.query_params.get('serial', '').strip()
     if not serial:
@@ -414,6 +734,7 @@ def api_traceability_search(request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_view(['GET'])
+@api_access_required('part_lookup')
 def api_part_lookup(request):
     part_no = request.query_params.get('part_no', '').strip()
     if not part_no:
@@ -442,6 +763,7 @@ def api_part_lookup(request):
 
 
 @api_view(['GET'])
+@api_access_required('laser_read')
 def api_check_serial(request):
     serial = request.query_params.get('serial', '').strip().upper()
     if not serial:
@@ -451,6 +773,7 @@ def api_check_serial(request):
 
 
 @api_view(['POST'])
+@api_access_required('add_part_write')
 def api_add_part(request):
     serial_number = request.data.get('serial_number', '')
     part_number = request.data.get('part_number', '')
@@ -496,6 +819,7 @@ def api_add_part(request):
 
 
 @api_view(['GET'])
+@api_access_required('parts_read')
 def api_parts(request):
     parts = Part.objects.all()
     data = []
@@ -514,6 +838,7 @@ def api_parts(request):
 
 
 @api_view(['DELETE'])
+@api_access_required('part_delete')
 def api_delete_part(request, part_id):
     try:
         part = Part.objects.get(id=part_id)
@@ -529,10 +854,11 @@ def api_delete_part(request, part_id):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_view(['GET'])
+@api_access_required('production_log_read')
 def api_production_log(request):
     """Return 7-day aggregated production data."""
     part_type = request.query_params.get('part_type', '')
-    today = date.today()
+    today = django_tz.localdate()
     start_date = today - timedelta(days=6)
 
     qs = Serial.objects.filter(created_at__date__gte=start_date)
@@ -612,6 +938,7 @@ def api_production_log(request):
 
 
 @api_view(['GET'])
+@api_access_required('production_log_read')
 def api_production_log_day(request):
     """Return individual serial records for a specific date."""
     day = request.query_params.get('day', '')
@@ -683,6 +1010,7 @@ def _parse_rotor_recorded_at(date_val, time_val):
 
 
 @api_view(['POST'])
+@api_access_required('rotor_write')
 def api_rotor_balancing_import(request):
     file_obj = request.FILES.get('file')
     if not file_obj:
@@ -754,12 +1082,14 @@ def api_rotor_balancing_import(request):
 
 
 @api_view(['GET'])
+@api_access_required('rotor_read')
 def api_rotor_balancing_list(request):
     records = RotorBalancing.objects.all().order_by('-imported_at')[:200]
     return Response([_rotor_balancing_payload(r) for r in records])
 
 
 @api_view(['GET'])
+@api_access_required('rotor_read')
 def api_rotor_balancing_by_serial(request, serial):
     serial = serial.strip()
     if not serial:
@@ -775,6 +1105,7 @@ def api_rotor_balancing_by_serial(request, serial):
     return Response(_rotor_balancing_payload(record))
 
 @api_view(['DELETE'])
+@api_access_required('rotor_write')
 def api_rotor_balancing_delete(request, pk):
     try:
         record = RotorBalancing.objects.get(pk=pk)
@@ -789,6 +1120,7 @@ def api_rotor_balancing_delete(request, pk):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_view(['POST'])
+@api_access_required('stator_write')
 def api_stator_testing_import(request):
     file_obj = request.FILES.get('file')
     if not file_obj:
@@ -952,18 +1284,19 @@ def api_stator_testing_import(request):
         return Response({'detail': f'{imported} records imported, {skipped} skipped (already existed).'})
 
     except Exception as e:
-        import traceback
-        print(traceback.format_exc())
+        logger.exception('Error importing stator testing records')
         return Response({'detail': f'Error parsing file: {str(e)}'}, status=500)
 
 
 @api_view(['GET'])
+@api_access_required('stator_read')
 def api_stator_testing_list(request):
     records = StatorTestingRecord.objects.all().order_by('-imported_at')[:200]
     return Response([_stator_testing_payload(r) for r in records])
 
 
 @api_view(['GET'])
+@api_access_required('stator_read')
 def api_stator_testing_by_serial(request, serial):
     serial = serial.strip()
     if not serial:
@@ -979,6 +1312,7 @@ def api_stator_testing_by_serial(request, serial):
     return Response(_stator_testing_payload(record))
 
 @api_view(['DELETE'])
+@api_access_required('stator_write')
 def api_stator_testing_delete(request, pk):
     try:
         record = StatorTestingRecord.objects.get(pk=pk)
@@ -1015,6 +1349,7 @@ def _master_serial_for_part(serial_number, part_type):
 
 
 @api_view(['GET'])
+@api_access_required('traceability_read')
 def api_motor_traceability(request, serial):
     motor_serial = serial.strip()
     if not motor_serial:
@@ -1076,6 +1411,10 @@ def _motor_assembly_payload(record):
 
 @api_view(['GET', 'POST'])
 def api_motor_assembly(request):
+    permission_action = 'motor_assembly_read' if request.method == 'GET' else 'motor_assembly_write'
+    if not can_access_action(request.user, permission_action):
+        return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+
     if request.method == 'GET':
         search = request.query_params.get('search', '').strip()
         records = MotorAssembly.objects.all()
@@ -1098,23 +1437,19 @@ def api_motor_assembly(request):
     if not stator_serial:
         return Response({'detail': 'Stator Sr No is required'}, status=400)
 
-    motor = _master_serial_for_part(motor_serial, 'Motor')
-    rotor = _master_serial_for_part(rotor_serial, 'Rotor')
-    stator = _master_serial_for_part(stator_serial, 'Stator')
+    rotor = RotorBalancing.objects.filter(serial_number__iexact=rotor_serial).first()
+    stator = StatorTestingRecord.objects.filter(serial_number__iexact=stator_serial).first()
 
     missing = []
-    if not motor:
-        missing.append('Motor Sr No not found in serials/parts as Motor')
     if not rotor:
-        missing.append('Rotor Sr No not found in serials/parts as Rotor')
+        missing.append('Rotor Sr No not found in rotor balancing records')
     if not stator:
-        missing.append('Stator Sr No not found in serials/parts as Stator')
+        missing.append('Stator Sr No not found in stator testing records')
     if missing:
         return Response({'detail': 'Validation failed', 'errors': missing}, status=400)
 
-    motor_serial = motor
-    rotor_serial = rotor
-    stator_serial = stator
+    rotor_serial = rotor.serial_number
+    stator_serial = stator.serial_number
 
     rotor_conflict = MotorAssembly.objects.filter(
         rotor_serial__iexact=rotor_serial
@@ -1165,6 +1500,7 @@ def api_motor_assembly(request):
 
 
 @api_view(['GET'])
+@api_access_required('magnet_read')
 def api_magnet_insertion_list(request):
     records = MagnetInsertion.objects.all().order_by('-timestamp')[:200]
     data = []
@@ -1184,6 +1520,7 @@ def api_magnet_insertion_list(request):
 
 
 @api_view(['POST'])
+@api_access_required('magnet_write')
 def api_magnet_insertion_create(request):
     stack_serial = request.data.get('stack_serial', '').strip()
     magnet_serial = request.data.get('magnet_serial', '').strip()
@@ -1251,6 +1588,7 @@ def api_magnet_insertion_create(request):
 
 
 @api_view(['GET'])
+@api_access_required('magnet_read')
 def api_magnet_insertion_stats(request):
     qs = MagnetInsertion.objects.all()
     total = qs.count()
@@ -1267,6 +1605,7 @@ def api_magnet_insertion_stats(request):
 
 
 @api_view(['DELETE'])
+@api_access_required('magnet_write')
 def api_magnet_insertion_delete(request, pk):
     try:
         record = MagnetInsertion.objects.get(pk=pk)
@@ -1285,6 +1624,7 @@ def _decode_modbus_string(registers):
     return b.decode('ascii', errors='ignore').strip('\x00').strip()
 
 @api_view(['GET'])
+@api_access_required('magnet_read')
 def api_magnet_insertion_status(request):
     client = ModbusTcpClient('192.168.3.10', port=502, timeout=1)
     try:

@@ -6,6 +6,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Login | NAPINO CONTROL SYSTEMS</title>
+  <link rel="icon" type="image/png" href="{% static 'images/ncs_logo.png' %}">
   <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap"
     rel="stylesheet" />
@@ -251,7 +252,8 @@
           body: JSON.stringify({ username, password })
         });
         if (res.ok) {
-          window.location.replace('/dashboard');
+          const data = await res.json();
+          window.location.replace(data.next_url || '/dashboard');
         } else {
           const data = await res.json();
           errBox.classList.remove('hidden'); errBox.classList.add('flex');

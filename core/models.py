@@ -2,6 +2,29 @@
 # Napino MES — Django ORM models
 from django.db import models
 from django.contrib.auth.models import User
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from .rbac import ROLE_CHOICES, ROLE_VIEWER, STATION_CHOICES
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_VIEWER)
+    station = models.CharField(max_length=40, choices=STATION_CHOICES, blank=True, default='')
+    designation = models.CharField(max_length=100, blank=True, default='')
+
+    class Meta:
+        db_table = 'user_profiles'
+        ordering = ['user__username']
+
+    def __str__(self):
+        return f"{self.user.username} - {self.get_role_display()}"
+
+
+@receiver(post_save, sender=User)
+def create_user_profile(sender, instance, created, **kwargs):
+    if created:
+        UserProfile.objects.get_or_create(user=instance)
 
 
 class Serial(models.Model):
