@@ -226,6 +226,48 @@ function showDetail(data, sn) {
     `;
   };
 
+  const rotorAttemptsTable = (attempts) => {
+    if (!attempts || !attempts.length) return '';
+    const display = (val) => (val === null || val === undefined || val === '' || String(val).toLowerCase() === 'nan') ? 'â€”' : val;
+    const rows = attempts.map(a => `
+      <tr class="border-b border-slate-100 last:border-0">
+        <td class="px-4 py-3 font-mono font-bold text-slate-900">#${display(a.attempt_no || 1)}</td>
+        <td class="px-4 py-3">${getBadge(a.result)}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane1_weight)}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane1_degree)}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane2_weight)}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane2_degree)}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${display(a.rpm)}</td>
+        <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${display(a.recorded_at || a.imported_at)}</td>
+      </tr>
+    `).join('');
+    return `
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+          <span class="material-symbols-outlined text-lg text-blue-500">timeline</span>
+          <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Balancing Attempts</h4>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead>
+              <tr class="border-b border-slate-200">
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Attempt</th>
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Result</th>
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL1 [G MM]</th>
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL1 [DEG]</th>
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL2 [G MM]</th>
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL2 [DEG]</th>
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">RPM</th>
+                <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Recorded</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  };
+
   if (data.laser_marking) {
     var s = data.laser_marking;
     var ptLabel = s.part_type || 'N/A';
@@ -252,6 +294,8 @@ function showDetail(data, sn) {
     var r = data.rotor_balancing;
     var rbContent = [
       renderField('Final Result', r.result, true),
+      renderField('Latest Attempt', r.latest_attempt || r.attempt_no),
+      renderField('Total Attempts', r.attempt_count || 1),
       renderField('Rotor Type', r.rotor_type),
       renderField('Measure Run', r.measure_run),
       renderField('Balancing Run', r.balancing_run),
@@ -264,6 +308,7 @@ function showDetail(data, sn) {
     ].join('');
 
     htmlOut += renderSection('Rotor Balancing Station', 'settings', rbContent, 'text-blue-500');
+    htmlOut += rotorAttemptsTable(r.attempts);
   }
 
   if (data.stator_testing) {

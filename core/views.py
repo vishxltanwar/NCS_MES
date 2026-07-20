@@ -257,7 +257,7 @@ def api_serials(request):
             'part_type': s.part_type or '',
             'created_at': s.created_at.astimezone(IST).isoformat() if s.created_at else '—',
             'status': s.status,
-            'rotor_result': getattr(RotorBalancing.objects.filter(serial_number__iexact=s.serial_number.strip()).first(), 'result', None)
+            'rotor_result': getattr(_latest_rotor_balancing(s.serial_number.strip()), 'result', None)
         })
         
     # Append isolated Rotor Balancing records
@@ -348,6 +348,7 @@ def _rotor_balancing_payload(r):
     return {
         'id': r.id,
         'serial_number': r.serial_number,
+        'attempt_no': r.attempt_no,
         'result': r.result,
         'rotor_type': r.rotor_type or '',
         'measure_run': r.measure_run if r.measure_run is not None else '',
@@ -360,6 +361,19 @@ def _rotor_balancing_payload(r):
         'recorded_at': r.recorded_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.recorded_at else '',
         'imported_at': r.imported_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if r.imported_at else '',
     }
+
+
+def _latest_rotor_balancing(serial):
+    return RotorBalancing.objects.filter(serial_number__iexact=serial).order_by(
+        '-attempt_no',
+        '-recorded_at',
+        '-imported_at',
+    ).first()
+
+
+def _rotor_balancing_history_payload(serial):
+    attempts = RotorBalancing.objects.filter(serial_number__iexact=serial).order_by('attempt_no', 'recorded_at', 'imported_at')
+    return [_rotor_balancing_payload(attempt) for attempt in attempts]
 
 
 def _stator_testing_payload(r):
@@ -667,7 +681,7 @@ def motor_traceability_pdf_view(request, motor_sr_no):
     if not link.rotor_serial or not link.stator_serial:
         raise Http404('Rotor/Stator link missing for this motor')
 
-    rotor = RotorBalancing.objects.filter(serial_number__iexact=link.rotor_serial).first()
+    rotor = _latest_rotor_balancing(link.rotor_serial)
     stator = StatorTestingRecord.objects.filter(serial_number__iexact=link.stator_serial).first()
     pdf = _build_motor_traceability_pdf(link, rotor, stator)
 
@@ -701,9 +715,13 @@ def api_traceability_search(request):
         }
         
     # Rotor Balancing
-    rotor = RotorBalancing.objects.filter(serial_number__iexact=serial).first()
+    rotor = _latest_rotor_balancing(serial)
     if rotor:
-        response_data['rotor_balancing'] = _rotor_balancing_payload(rotor)
+        rotor_payload = _rotor_balancing_payload(rotor)
+        rotor_payload['latest_attempt'] = rotor_payload['attempt_no']
+        rotor_payload['attempt_count'] = RotorBalancing.objects.filter(serial_number__iexact=serial).count()
+        rotor_payload['attempts'] = _rotor_balancing_history_payload(serial)
+        response_data['rotor_balancing'] = rotor_payload
         
     # Stator Testing
     stator = StatorTestingRecord.objects.filter(serial_number__iexact=serial).first()
@@ -982,7 +1000,7 @@ def api_production_log_day(request):
             'part_type': s.part_type or '',
             'status': s.status,
             'created_at': s.created_at.astimezone(IST).isoformat() if s.created_at else '—',
-            'rotor_result': getattr(RotorBalancing.objects.filter(serial_number=s.serial_number).first(), 'result', None)
+            'rotor_result': getattr(_latest_rotor_balancing(s.serial_number), 'result', None)
         })
 
     return Response({
@@ -1003,21 +1021,48 @@ def _parse_rotor_recorded_at(date_val, time_val):
     """Parse dd-mm-yy + hh:mm:ss from Excel row values (native datetime or strings)."""
     recorded_at = None
     try:
+        parsed_date = None
+        parsed_time = None
+
         if isinstance(date_val, dt.datetime):
-            if isinstance(time_val, dt.time):
-                recorded_at = dt.datetime.combine(date_val.date(), time_val)
-            else:
-                recorded_at = date_val
-        elif isinstance(date_val, str) and isinstance(time_val, str):
-            date_str, time_str = date_val.strip(), time_val.strip()
-            if date_str and time_str:
-                dt_str = f"{date_str} {time_str}"
-                for fmt in ("%d-%m-%y %H:%M:%S", "%d-%m-%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-                    try:
-                        recorded_at = datetime.strptime(dt_str, fmt)
-                        break
-                    except ValueError:
-                        pass
+            parsed_date = date_val.date()
+        elif isinstance(date_val, dt.date):
+            parsed_date = date_val
+        elif isinstance(date_val, (int, float)):
+            parsed_date = openpyxl.utils.datetime.from_excel(date_val).date()
+        elif isinstance(date_val, str):
+            date_str = date_val.strip()
+            for fmt in ("%d-%m-%y", "%d-%m-%Y", "%d/%m/%y", "%d/%m/%Y", "%d.%m.%y", "%d.%m.%Y", "%Y-%m-%d"):
+                try:
+                    parsed_date = datetime.strptime(date_str, fmt).date()
+                    break
+                except ValueError:
+                    pass
+
+        if isinstance(time_val, dt.datetime):
+            parsed_time = time_val.time()
+        elif isinstance(time_val, dt.time):
+            parsed_time = time_val
+        elif isinstance(time_val, dt.timedelta):
+            seconds = int(time_val.total_seconds()) % 86400
+            parsed_time = (dt.datetime.min + timedelta(seconds=seconds)).time()
+        elif isinstance(time_val, (int, float)):
+            seconds = int(round((float(time_val) % 1) * 86400))
+            parsed_time = (dt.datetime.min + timedelta(seconds=seconds)).time()
+        elif isinstance(time_val, str):
+            time_str = time_val.strip()
+            for fmt in ("%H:%M:%S", "%H:%M:%S.%f", "%H:%M", "%I:%M:%S %p", "%I:%M %p"):
+                try:
+                    parsed_time = datetime.strptime(time_str, fmt).time()
+                    break
+                except ValueError:
+                    pass
+
+        if parsed_date and parsed_time:
+            recorded_at = dt.datetime.combine(parsed_date, parsed_time)
+        elif isinstance(date_val, dt.datetime):
+            recorded_at = date_val
+
         if recorded_at and django_tz.is_naive(recorded_at):
             recorded_at = django_tz.make_aware(recorded_at)
     except (ValueError, TypeError):
@@ -1047,8 +1092,13 @@ def api_rotor_balancing_import(request):
         except ValueError as e:
             return Response({'detail': f'Missing expected column: {e}'}, status=400)
 
+        # Schenck exports record the measurement timestamp as column A date + column B time.
+        date_col_index = col_indices.get('dd-mm-yy', 0)
+        time_col_index = col_indices.get('hh:mm:ss', 1)
+
         imported = 0
-        skipped = 0
+        updated = 0
+        file_attempt_counts = {}
         
         def safe_int(val):
             try: return int(float(val)) if val is not None else None
@@ -1064,34 +1114,52 @@ def api_rotor_balancing_import(request):
             if not sn_val: continue
                 
             serial_num = str(sn_val).strip()
+            serial_key = serial_num.lower()
+            file_attempt_counts[serial_key] = file_attempt_counts.get(serial_key, 0) + 1
+            incoming_attempt_no = file_attempt_counts[serial_key]
             result_val = str(row[col_indices['InTol']]).strip().upper()
             rotor_type_val = str(row[col_indices['Rotor-Type']] or '').strip()
             
-            date_val = row[col_indices['dd-mm-yy']]
-            time_val = row[col_indices['hh:mm:ss']]
+            date_val = row[date_col_index]
+            time_val = row[time_col_index]
             recorded_at = _parse_rotor_recorded_at(date_val, time_val)
 
             final_res = 'Pass' if result_val == 'Y' else 'Fail'
 
-            if RotorBalancing.objects.filter(serial_number=serial_num).exists():
-                skipped += 1
-            else:
-                RotorBalancing.objects.create(
-                    serial_number=serial_num,
-                    result=final_res,
-                    rotor_type=rotor_type_val,
-                    recorded_at=recorded_at,
-                    measure_run=safe_int(row[col_indices['Mea-Run']]),
-                    balancing_run=safe_int(row[col_indices['Bal-Run']]),
-                    rpm=safe_int(row[col_indices['RpM']]),
-                    plane1_weight=safe_float(row[col_indices['PL1[G_MM]']]),
-                    plane1_degree=safe_float(row[col_indices['PL1[DEG]']]),
-                    plane2_weight=safe_float(row[col_indices['PL2[G_MM]']]),
-                    plane2_degree=safe_float(row[col_indices['PL2[DEG]']])
-                )
-                imported += 1
+            with transaction.atomic():
+                row_data = {
+                    'result': final_res,
+                    'rotor_type': rotor_type_val,
+                    'recorded_at': recorded_at,
+                    'measure_run': safe_int(row[col_indices['Mea-Run']]),
+                    'balancing_run': safe_int(row[col_indices['Bal-Run']]),
+                    'rpm': safe_int(row[col_indices['RpM']]),
+                    'plane1_weight': safe_float(row[col_indices['PL1[G_MM]']]),
+                    'plane1_degree': safe_float(row[col_indices['PL1[DEG]']]),
+                    'plane2_weight': safe_float(row[col_indices['PL2[G_MM]']]),
+                    'plane2_degree': safe_float(row[col_indices['PL2[DEG]']]),
+                }
+                existing_attempt = RotorBalancing.objects.filter(
+                    serial_number__iexact=serial_num,
+                    attempt_no=incoming_attempt_no,
+                ).first()
+                if existing_attempt and existing_attempt.recorded_at is None:
+                    for field, value in row_data.items():
+                        setattr(existing_attempt, field, value)
+                    existing_attempt.save(update_fields=list(row_data.keys()))
+                    updated += 1
+                elif existing_attempt and recorded_at and existing_attempt.recorded_at == recorded_at:
+                    continue
+                else:
+                    attempt_no = RotorBalancing.objects.filter(serial_number__iexact=serial_num).count() + 1
+                    RotorBalancing.objects.create(
+                        serial_number=serial_num,
+                        attempt_no=attempt_no,
+                        **row_data,
+                    )
+                    imported += 1
                 
-        return Response({'detail': f'{imported} records imported, {skipped} skipped (already existed).'})
+        return Response({'detail': f'{imported} rotor balancing attempts imported, {updated} existing attempts updated.'})
 
     except Exception as e:
         return Response({'detail': f'Error parsing file: {str(e)}'}, status=500)
@@ -1111,14 +1179,18 @@ def api_rotor_balancing_by_serial(request, serial):
     if not serial:
         return Response({'detail': 'Rotor serial is required', 'code': 'serial_required'}, status=400)
 
-    record = RotorBalancing.objects.filter(serial_number__iexact=serial).first()
+    record = _latest_rotor_balancing(serial)
     if not record:
         return Response({
             'detail': 'Rotor balancing record not yet created',
             'code': 'rotor_balancing_not_created',
         }, status=404)
 
-    return Response(_rotor_balancing_payload(record))
+    payload = _rotor_balancing_payload(record)
+    payload['latest_attempt'] = payload['attempt_no']
+    payload['attempt_count'] = RotorBalancing.objects.filter(serial_number__iexact=serial).count()
+    payload['attempts'] = _rotor_balancing_history_payload(serial)
+    return Response(payload)
 
 @api_view(['DELETE'])
 @api_access_required('rotor_write')
@@ -1394,7 +1466,7 @@ def api_motor_traceability(request, serial):
             'stator_serial': link.stator_serial,
         }, status=404)
 
-    rotor = RotorBalancing.objects.filter(serial_number__iexact=link.rotor_serial).first()
+    rotor = _latest_rotor_balancing(link.rotor_serial)
     stator = StatorTestingRecord.objects.filter(serial_number__iexact=link.stator_serial).first()
 
     return Response({
@@ -1411,7 +1483,7 @@ def api_motor_traceability(request, serial):
 
 
 def _motor_assembly_payload(record):
-    rotor = RotorBalancing.objects.filter(serial_number__iexact=record.rotor_serial).first()
+    rotor = _latest_rotor_balancing(record.rotor_serial)
     stator = StatorTestingRecord.objects.filter(serial_number__iexact=record.stator_serial).first()
     return {
         'id': record.id,
@@ -1453,7 +1525,7 @@ def api_motor_assembly(request):
     if not stator_serial:
         return Response({'detail': 'Stator Sr No is required'}, status=400)
 
-    rotor = RotorBalancing.objects.filter(serial_number__iexact=rotor_serial).first()
+    rotor = _latest_rotor_balancing(rotor_serial)
     stator = StatorTestingRecord.objects.filter(serial_number__iexact=stator_serial).first()
 
     missing = []

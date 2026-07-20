@@ -68,9 +68,17 @@
         <h3 class="font-bold text-sm text-slate-900 uppercase tracking-tight">Recent Testing Records</h3>
         <span id="table-count" class="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">0 records</span>
       </div>
-      <button onclick="loadRecords()" class="text-xs text-slate-400 hover:text-primary transition-colors flex items-center gap-1">
-        <span class="material-symbols-outlined text-base">refresh</span> Load
-      </button>
+      <div class="flex items-center gap-3">
+        <div class="relative">
+          <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-base text-slate-400">search</span>
+          <input id="serial-search" type="search" autocomplete="off" placeholder="Search serial number"
+            oninput="applySerialSearch()"
+            class="w-64 rounded-lg border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10">
+        </div>
+        <button onclick="loadRecords()" class="text-xs text-slate-400 hover:text-primary transition-colors flex items-center gap-1">
+          <span class="material-symbols-outlined text-base">refresh</span> Load
+        </button>
+      </div>
     </div>
     <div class="overflow-x-auto mt-6">
       <table class="w-full text-left text-sm border-separate border-spacing-0">
@@ -99,8 +107,19 @@ let expandedRowId = null;
 async function loadRecords() {
   const data = await API.fetchBalancingRecords('stator');
   allRecords = data;
-  renderTable(data);
+  renderTable(getFilteredRecords());
   updateKPIs(data);
+}
+
+function getFilteredRecords() {
+  const term = (document.getElementById('serial-search')?.value || '').trim().toLowerCase();
+  if (!term) return allRecords;
+  return allRecords.filter(r => String(r.serial_number || '').toLowerCase().includes(term));
+}
+
+function applySerialSearch() {
+  expandedRowId = null;
+  renderTable(getFilteredRecords());
 }
 
 function updateKPIs(data) {
@@ -123,7 +142,7 @@ function toggleRow(id) {
   } else {
     expandedRowId = id;
   }
-  renderTable(allRecords);
+  renderTable(getFilteredRecords());
 }
 
 function renderTable(data) {
@@ -133,7 +152,9 @@ function renderTable(data) {
   tableCount.textContent = `${data.length} records`;
   
   if (data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">No records available. Import a TSV file to see data.</td></tr>';
+    const hasSearch = (document.getElementById('serial-search')?.value || '').trim();
+    const message = hasSearch ? 'No records match that serial number.' : 'No records available. Import a TSV file to see data.';
+    tbody.innerHTML = `<tr><td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">${message}</td></tr>`;
     return;
   }
 

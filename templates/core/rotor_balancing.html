@@ -68,21 +68,37 @@
         <h3 class="font-bold text-sm text-slate-900 uppercase tracking-tight">Recent Balancing Records</h3>
         <span id="table-count" class="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full">0 records</span>
       </div>
-      <button onclick="loadRecords()" class="text-xs text-slate-400 hover:text-primary transition-colors flex items-center gap-1">
-        <span class="material-symbols-outlined text-base">refresh</span> Load
-      </button>
+      <div class="flex items-center gap-3">
+        <div class="relative">
+          <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-base text-slate-400">search</span>
+          <input id="serial-search" type="search" autocomplete="off" placeholder="Search serial number"
+            oninput="applySerialSearch()"
+            class="w-64 rounded-lg border border-slate-200 bg-white pl-9 pr-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10">
+        </div>
+        <button onclick="loadRecords()" class="text-xs text-slate-400 hover:text-primary transition-colors flex items-center gap-1">
+          <span class="material-symbols-outlined text-base">refresh</span> Load
+        </button>
+      </div>
     </div>
     <div class="overflow-x-auto mt-6">
       <table class="w-full text-left text-sm border-separate border-spacing-0">
         <thead class="sticky top-0 bg-white z-10">
           <tr class="bg-slate-50 border-b border-slate-200 whitespace-nowrap">
             <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Serial Number</th>
-            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200 text-right">Status & Details</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Attempt</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Result</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">PL1 [G MM]</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">PL1 [DEG]</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">PL2 [G MM]</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">PL2 [DEG]</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">RPM</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Recorded</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200 text-right">Action</th>
           </tr>
         </thead>
         <tbody id="records-tbody" class="divide-y divide-slate-100">
           <tr>
-            <td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">Loading records...</td>
+            <td colspan="10" class="px-5 py-6 text-center text-slate-400 text-xs">Loading records...</td>
           </tr>
         </tbody>
       </table>
@@ -94,13 +110,27 @@
 
 {% block scripts %}
 let allRecords = [];
-let expandedRowId = null;
+let expandedSerial = null;
+let rotorHistoryBySerial = {};
 
 async function loadRecords() {
   const data = await API.fetchBalancingRecords('rotor');
   allRecords = data;
-  renderTable(data);
+  rotorHistoryBySerial = {};
+  expandedSerial = null;
+  renderTable(getFilteredRecords());
   updateKPIs(data);
+}
+
+function getFilteredRecords() {
+  const term = (document.getElementById('serial-search')?.value || '').trim().toLowerCase();
+  if (!term) return allRecords;
+  return allRecords.filter(r => String(r.serial_number || '').toLowerCase().includes(term));
+}
+
+function applySerialSearch() {
+  expandedSerial = null;
+  renderTable(getFilteredRecords());
 }
 
 function updateKPIs(data) {
@@ -117,103 +147,183 @@ function updateKPIs(data) {
   document.getElementById('kpi-failed').textContent = failed;
 }
 
-function toggleRow(id) {
-  if (expandedRowId === id) {
-    expandedRowId = null;
-  } else {
-    expandedRowId = id;
+function latestRecordsBySerial(data) {
+  const grouped = new Map();
+  data.forEach(record => {
+    const key = String(record.serial_number || '').toLowerCase();
+    if (!key) return;
+    const current = grouped.get(key);
+    const attemptNo = Number(record.attempt_no || 1);
+    const currentAttemptNo = current ? Number(current.attempt_no || 1) : 0;
+    if (!current || attemptNo > currentAttemptNo) {
+      grouped.set(key, record);
+    }
+  });
+  return Array.from(grouped.values()).sort((a, b) => {
+    const aTime = new Date(a.recorded_at || a.imported_at || 0).getTime();
+    const bTime = new Date(b.recorded_at || b.imported_at || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
+function serialKeyFor(serial) {
+  return String(serial || '').toLowerCase();
+}
+
+function earlierAttemptsFor(record, data) {
+  const latestAttempt = Number(record.attempt_no || 1);
+  const key = serialKeyFor(record.serial_number);
+  const source = rotorHistoryBySerial[key] || data.filter(r => serialKeyFor(r.serial_number) === key);
+  return source
+    .filter(r => Number(r.attempt_no || 1) < latestAttempt)
+    .sort((a, b) => Number(a.attempt_no || 1) - Number(b.attempt_no || 1));
+}
+
+function displayValue(value) {
+  return value !== '' && value !== null && value !== undefined ? value : '-';
+}
+
+async function loadHistoryForSerial(serial) {
+  const key = serialKeyFor(serial);
+  if (rotorHistoryBySerial[key]) return;
+  try {
+    const res = await fetch('/api/rotor-balancing/by-serial/' + encodeURIComponent(serial) + '/');
+    const data = await res.json();
+    rotorHistoryBySerial[key] = res.ok && Array.isArray(data.attempts) ? data.attempts : [];
+  } catch (err) {
+    rotorHistoryBySerial[key] = [];
+    showToast('Unable to load rotor attempt history', 'error');
   }
-  renderTable(allRecords);
+}
+
+async function toggleRow(serial) {
+  const key = serialKeyFor(serial);
+  if (expandedSerial === key) {
+    expandedSerial = null;
+    renderTable(getFilteredRecords());
+    return;
+  }
+  expandedSerial = key;
+  renderTable(getFilteredRecords());
+  await loadHistoryForSerial(serial);
+  if (expandedSerial === key) renderTable(getFilteredRecords());
 }
 
 function renderTable(data) {
   const tbody = document.getElementById('records-tbody');
   const tableCount = document.getElementById('table-count');
   
-  tableCount.textContent = `${data.length} records`;
+  const latestRecords = latestRecordsBySerial(data);
+  tableCount.textContent = `${latestRecords.length} records`;
   
   if (data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">No records available. Import an Excel file to see data.</td></tr>';
+    const hasSearch = (document.getElementById('serial-search')?.value || '').trim();
+    const message = hasSearch ? 'No records match that serial number.' : 'No records available. Import an Excel file to see data.';
+    tbody.innerHTML = `<tr><td colspan="10" class="px-5 py-6 text-center text-slate-400 text-xs">${message}</td></tr>`;
     return;
   }
   
   const rows = [];
-  data.forEach(r => {
+  latestRecords.forEach(r => {
     const isPass = r.result === 'Pass';
     const bColor = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
     const dotColor = isPass ? 'bg-green-500' : 'bg-red-500';
-    const isExpanded = expandedRowId === r.id;
+    const earlierAttempts = earlierAttemptsFor(r, data);
+    const hasHistory = Number(r.attempt_no || 1) > 1 || earlierAttempts.length > 0;
+    const key = serialKeyFor(r.serial_number);
+    const encodedSerial = encodeURIComponent(r.serial_number || '');
+    const isExpanded = expandedSerial === key;
+    const historyLoaded = Boolean(rotorHistoryBySerial[key]);
+    const historyRows = earlierAttempts.map(a => {
+      const attemptPass = a.result === 'Pass';
+      const attemptColor = attemptPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
+      const attemptDot = attemptPass ? 'bg-green-500' : 'bg-red-500';
+      return `
+        <tr class="border-b border-slate-100 last:border-0">
+          <td class="px-4 py-3 font-mono font-bold text-slate-900">#${a.attempt_no || 1}</td>
+          <td class="px-4 py-3">
+            <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${attemptColor} px-2.5 py-1 rounded-full">
+              <span class="h-1.5 w-1.5 rounded-full ${attemptDot}"></span>${a.result}
+            </span>
+          </td>
+          <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.plane1_weight)}</td>
+          <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.plane1_degree)}</td>
+          <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.plane2_weight)}</td>
+          <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.plane2_degree)}</td>
+          <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.rpm)}</td>
+          <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${displayValue(a.recorded_at)}</td>
+          <td class="px-4 py-3 text-right">
+            <button onclick="event.stopPropagation(); deleteRecord(${a.id})" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-red-500 hover:bg-red-50 rounded-md transition-colors">
+              <span class="material-symbols-outlined text-sm">delete</span> Delete
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
     
     // Main Row
     rows.push(`
-      <tr class="hover:bg-[#F8F9FA] transition-all cursor-pointer ${isExpanded ? 'bg-[#F8F9FA]' : ''}" onclick="toggleRow(${r.id})">
+      <tr class="hover:bg-[#F8F9FA] transition-all ${hasHistory ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-[#F8F9FA]' : ''}" ${hasHistory ? `onclick="toggleRow(decodeURIComponent('${encodedSerial}'))"` : ''}>
         <td class="px-5 py-3">
-          <span class="font-mono font-medium text-primary text-sm hover:underline decoration-1 underline-offset-4">
-            ${r.serial_number}
+          <span class="font-mono font-medium text-primary text-sm inline-flex items-center gap-2">
+            ${hasHistory ? `<span class="material-symbols-outlined text-base text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}">chevron_right</span>` : ''}
+            <span class="hover:underline decoration-1 underline-offset-4">${r.serial_number}</span>
           </span>
         </td>
         <td class="px-5 py-3">
+          <span class="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-xs font-black text-slate-600">#${r.attempt_no || 1}</span>
+        </td>
+        <td class="px-5 py-3">
+          <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${bColor} px-2.5 py-1 rounded-full shadow-sm">
+            <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${r.result}
+          </span>
+        </td>
+        <td class="px-5 py-3 font-mono text-slate-700">${displayValue(r.plane1_weight)}</td>
+        <td class="px-5 py-3 font-mono text-slate-700">${displayValue(r.plane1_degree)}</td>
+        <td class="px-5 py-3 font-mono text-slate-700">${displayValue(r.plane2_weight)}</td>
+        <td class="px-5 py-3 font-mono text-slate-700">${displayValue(r.plane2_degree)}</td>
+        <td class="px-5 py-3 font-mono text-slate-700">${displayValue(r.rpm)}</td>
+        <td class="px-5 py-3 text-slate-500 whitespace-nowrap">${displayValue(r.recorded_at)}</td>
+        <td class="px-5 py-3 text-right">
           <div class="flex items-center justify-end gap-3">
-            <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${bColor} px-2.5 py-1 rounded-full shadow-sm">
-              <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${r.result}
-            </span>
-            <span class="material-symbols-outlined text-slate-400 text-xl transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}">
-              expand_more
-            </span>
+            ${hasHistory ? `<span class="text-[10px] font-bold text-slate-400">${Number(r.attempt_no || 1) - 1} earlier</span>` : ''}
+            <button onclick="event.stopPropagation(); deleteRecord(${r.id})" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-red-500 hover:bg-red-50 rounded-md transition-colors">
+              <span class="material-symbols-outlined text-sm">delete</span> Delete
+            </button>
           </div>
         </td>
       </tr>
     `);
 
-    // Detail Row
-    if (isExpanded) {
+    if (isExpanded && hasHistory) {
       rows.push(`
         <tr>
-          <td colspan="2" class="p-0 border-t border-slate-100">
+          <td colspan="10" class="p-0 border-t border-slate-100">
             <div class="bg-[#F8F9FA] px-8 py-6">
-              <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-12 gap-y-6">
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Rotor Type</p>
-                  <p class="text-sm font-semibold text-slate-900">${r.rotor_type || '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mea. Run</p>
-                  <p class="text-sm font-semibold text-slate-900">${r.measure_run || '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Bal. Run</p>
-                  <p class="text-sm font-semibold text-slate-900">${r.balancing_run || '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">RPM</p>
-                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.rpm || '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL1 [G MM]</p>
-                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane1_weight !== '' && r.plane1_weight !== null ? r.plane1_weight : '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL1 [DEG]</p>
-                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane1_degree !== '' && r.plane1_degree !== null ? r.plane1_degree : '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL2 [G MM]</p>
-                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane2_weight !== '' && r.plane2_weight !== null ? r.plane2_weight : '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PL2 [DEG]</p>
-                  <p class="text-sm font-semibold text-slate-900 font-mono">${r.plane2_degree !== '' && r.plane2_degree !== null ? r.plane2_degree : '-'}</p>
-                </div>
-                <div class="space-y-1">
-                  <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recorded At</p>
-                  <p class="text-sm font-medium text-slate-500">${r.recorded_at || r.imported_at}</p>
-                </div>
+              <div class="mb-3 flex items-center justify-between">
+                <h4 class="text-[10px] font-black uppercase tracking-widest text-slate-500">Earlier Attempts</h4>
+                <span class="text-[10px] font-bold text-slate-400">${historyLoaded ? `${earlierAttempts.length} records` : 'Loading...'}</span>
               </div>
-              <div class="mt-8 pt-4 border-t border-slate-200/60 flex justify-end">
-                <button onclick="event.stopPropagation(); deleteRecord(${r.id})" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100">
-                  <span class="material-symbols-outlined text-sm">delete</span> Delete Record
-                </button>
+              ${historyLoaded ? `
+              <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                <table class="w-full text-left text-xs">
+                  <thead>
+                    <tr class="border-b border-slate-200 bg-slate-50">
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Attempt</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Result</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL1 [G MM]</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL1 [DEG]</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL2 [G MM]</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL2 [DEG]</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">RPM</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Recorded</th>
+                      <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>${historyRows}</tbody>
+                </table>
               </div>
+              ` : '<div class="rounded-lg border border-slate-200 bg-white px-5 py-6 text-center text-xs text-slate-400">Loading earlier attempts...</div>'}
             </div>
           </td>
         </tr>

@@ -1,8 +1,13 @@
+from io import BytesIO
+
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+import openpyxl
 from rest_framework.test import APIClient
 
 from core.models import MotorAssembly, Part, RotorBalancing, Serial, StatorTestingRecord
+from core.views import IST
 
 
 class MotorTraceabilityApiTests(TestCase):
@@ -94,3 +99,78 @@ class MotorTraceabilityApiTests(TestCase):
         self.assertEqual(rotor_response.data['rpm'], 1200)
         self.assertEqual(stator_response.status_code, 200)
         self.assertEqual(stator_response.data['hv_result'], 'Pass')
+
+    def build_rotor_upload(self):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append([
+            'dd-mm-yy',
+            'hh:mm:ss',
+            'Rotor-Type',
+            'Rotor-Ident',
+            'Mea-Run',
+            'Bal-Run',
+            'RpM',
+            'PL1[G_MM]',
+            'PL1[DEG]',
+            'PL2[G_MM]',
+            'PL2[DEG]',
+            'InTol',
+        ])
+        sheet.append(['20-07-26', '10:00:00', 'Type-A', 'R001', 1, 1, 1200, 12.5, 90, 10.0, 180, 'N'])
+        sheet.append(['20-07-26', '10:05:00', 'Type-A', 'R001', 2, 2, 1200, 1.5, 45, 1.0, 90, 'Y'])
+        buffer = BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+        upload = SimpleUploadedFile(
+            'rotor.xlsx',
+            buffer.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        return upload
+
+    def test_rotor_import_stores_multiple_attempts_for_same_serial(self):
+        upload = self.build_rotor_upload()
+        response = self.client.post('/api/rotor-balancing/import/', {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 200)
+        attempts = RotorBalancing.objects.filter(serial_number='R001').order_by('attempt_no')
+        self.assertEqual(attempts.count(), 2)
+        self.assertEqual([attempt.attempt_no for attempt in attempts], [1, 2])
+        self.assertEqual(attempts[0].result, 'Fail')
+        self.assertEqual(attempts[1].result, 'Pass')
+        self.assertIsNotNone(attempts[0].recorded_at)
+        self.assertIsNotNone(attempts[1].recorded_at)
+        first_recorded = attempts[0].recorded_at.astimezone(IST)
+        second_recorded = attempts[1].recorded_at.astimezone(IST)
+        self.assertEqual(first_recorded.hour, 10)
+        self.assertEqual(first_recorded.minute, 0)
+        self.assertEqual(second_recorded.hour, 10)
+        self.assertEqual(second_recorded.minute, 5)
+        self.assertNotEqual(attempts[0].recorded_at, attempts[1].recorded_at)
+
+    def test_rotor_import_backfills_existing_null_recorded_at_attempts(self):
+        RotorBalancing.objects.create(serial_number='R001', attempt_no=1, result='Fail')
+        RotorBalancing.objects.create(serial_number='R001', attempt_no=2, result='Pass')
+        upload = self.build_rotor_upload()
+
+        response = self.client.post('/api/rotor-balancing/import/', {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 200)
+        attempts = RotorBalancing.objects.filter(serial_number='R001').order_by('attempt_no')
+        self.assertEqual(attempts.count(), 2)
+        self.assertEqual(attempts[0].recorded_at.astimezone(IST).strftime('%H:%M:%S'), '10:00:00')
+        self.assertEqual(attempts[1].recorded_at.astimezone(IST).strftime('%H:%M:%S'), '10:05:00')
+
+    def test_rotor_by_serial_returns_latest_attempt_and_history(self):
+        RotorBalancing.objects.create(serial_number='R001', attempt_no=1, result='Fail', rpm=1200)
+        RotorBalancing.objects.create(serial_number='R001', attempt_no=2, result='Pass', rpm=1300)
+
+        response = self.client.get('/api/rotor-balancing/by-serial/R001/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['attempt_no'], 2)
+        self.assertEqual(response.data['latest_attempt'], 2)
+        self.assertEqual(response.data['attempt_count'], 2)
+        self.assertEqual(response.data['result'], 'Pass')
+        self.assertEqual([attempt['attempt_no'] for attempt in response.data['attempts']], [1, 2])

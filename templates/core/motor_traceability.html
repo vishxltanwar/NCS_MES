@@ -197,6 +197,91 @@ function section(title, icon, content, color) {
   `;
 }
 
+function toggleRotorAttemptHistory() {
+  const row = document.getElementById('rotor-attempt-history-row');
+  const icon = document.getElementById('rotor-attempt-history-icon');
+  if (!row || !icon) return;
+  const isHidden = row.classList.toggle('hidden');
+  icon.classList.toggle('rotate-90', !isHidden);
+}
+
+function rotorAttemptsSummary(data) {
+  const attempts = data.attempts || [];
+  const earlierAttempts = attempts.filter(a => a.id !== data.id);
+  const hasHistory = earlierAttempts.length > 0;
+  const cell = value => escapeHtml(emptyVal(value) ? '-' : value);
+  const historyRows = earlierAttempts.map(a => `
+    <tr class="border-b border-slate-100 last:border-0">
+      <td class="px-4 py-3 font-mono font-bold text-slate-900">#${cell(a.attempt_no || 1)}</td>
+      <td class="px-4 py-3">${badge(a.result, '-')}</td>
+      <td class="px-4 py-3 font-mono text-slate-700">${cell(a.plane1_weight)}</td>
+      <td class="px-4 py-3 font-mono text-slate-700">${cell(a.plane1_degree)}</td>
+      <td class="px-4 py-3 font-mono text-slate-700">${cell(a.plane2_weight)}</td>
+      <td class="px-4 py-3 font-mono text-slate-700">${cell(a.plane2_degree)}</td>
+      <td class="px-4 py-3 font-mono text-slate-700">${cell(a.rpm)}</td>
+      <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${cell(a.recorded_at || a.imported_at)}</td>
+    </tr>
+  `).join('');
+  return `
+    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center gap-2">
+        <span class="material-symbols-outlined text-lg text-blue-500">balance</span>
+        <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Final Balancing Record</h4>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-white">
+            <tr class="border-b border-slate-200">
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Attempt</th>
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Result</th>
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL1 [G MM]</th>
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL1 [DEG]</th>
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL2 [G MM]</th>
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">PL2 [DEG]</th>
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">RPM</th>
+              <th class="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Recorded</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="${hasHistory ? 'cursor-pointer hover:bg-slate-50' : ''}" ${hasHistory ? 'onclick="toggleRotorAttemptHistory()"' : ''}>
+              <td class="px-4 py-3 font-mono font-bold text-slate-900">
+                <span class="inline-flex items-center gap-2">
+                  ${hasHistory ? '<span id="rotor-attempt-history-icon" class="material-symbols-outlined text-base text-slate-400 transition-transform">chevron_right</span>' : ''}
+                  #${cell(data.attempt_no || data.latest_attempt || 1)}
+                </span>
+              </td>
+              <td class="px-4 py-3">${badge(data.result, '-')}</td>
+              <td class="px-4 py-3 font-mono text-slate-700">${cell(data.plane1_weight)}</td>
+              <td class="px-4 py-3 font-mono text-slate-700">${cell(data.plane1_degree)}</td>
+              <td class="px-4 py-3 font-mono text-slate-700">${cell(data.plane2_weight)}</td>
+              <td class="px-4 py-3 font-mono text-slate-700">${cell(data.plane2_degree)}</td>
+              <td class="px-4 py-3 font-mono text-slate-700">${cell(data.rpm)}</td>
+              <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${cell(data.recorded_at || data.imported_at)}</td>
+            </tr>
+            ${hasHistory ? `
+              <tr id="rotor-attempt-history-row" class="hidden">
+                <td colspan="8" class="bg-slate-50 p-0">
+                  <div class="px-5 py-4">
+                    <div class="mb-3 flex items-center justify-between">
+                      <h5 class="text-[10px] font-black uppercase tracking-widest text-slate-500">Earlier Attempts</h5>
+                      <span class="text-[10px] font-bold text-slate-400">${earlierAttempts.length} records</span>
+                    </div>
+                    <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                      <table class="w-full text-left text-xs">
+                        <tbody>${historyRows}</tbody>
+                      </table>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            ` : ''}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 function detailShell(title, serial, icon, body, color) {
   return `
     <div class="flex items-center justify-between border-b-2 border-slate-200 pb-4">
@@ -232,20 +317,8 @@ async function loadRotorDetail() {
       renderDetail(detailShell('Rotor Balancing', serial, 'settings', section('Record Status', 'info', field('Status', data.detail || 'Rotor balancing record not yet created'), 'text-amber-500'), 'text-blue-500'));
       return;
     }
-    const content = [
-      field('Final Result', data.result, true),
-      field('Rotor Type', data.rotor_type),
-      field('Measure Run', data.measure_run),
-      field('Balancing Run', data.balancing_run),
-      field('RPM', data.rpm),
-      field('PL1 [G MM]', data.plane1_weight),
-      field('PL1 [DEG]', data.plane1_degree),
-      field('PL2 [G MM]', data.plane2_weight),
-      field('PL2 [DEG]', data.plane2_degree),
-      field('Recorded At', data.recorded_at),
-      field('Imported At', data.imported_at)
-    ].join('');
-    renderDetail(detailShell('Rotor Balancing', serial, 'settings', section('Balancing Record', 'balance', content, 'text-blue-500'), 'text-blue-500'));
+    const body = rotorAttemptsSummary(data);
+    renderDetail(detailShell('Rotor Balancing', serial, 'settings', body, 'text-blue-500'));
   } catch (err) {
     showToast('Unable to load rotor balancing detail', 'error');
   }

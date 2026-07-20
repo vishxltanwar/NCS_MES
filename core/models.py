@@ -62,7 +62,8 @@ class Part(models.Model):
 
 
 class RotorBalancing(models.Model):
-    serial_number = models.CharField(max_length=32, unique=True, db_index=True)
+    serial_number = models.CharField(max_length=32, db_index=True)
+    attempt_no    = models.IntegerField(default=1, db_index=True)
     result        = models.CharField(max_length=10, choices=[('Pass', 'Pass'), ('Fail', 'Fail')])
     rotor_type    = models.CharField(max_length=100, null=True, blank=True)
     recorded_at   = models.DateTimeField(null=True, blank=True)
@@ -78,9 +79,12 @@ class RotorBalancing(models.Model):
     class Meta:
         db_table = 'rotor_balancing'
         ordering = ['-imported_at']
+        indexes = [
+            models.Index(fields=['serial_number', 'attempt_no']),
+        ]
 
     def __str__(self):
-        return f"{self.serial_number} - {self.result}"
+        return f"{self.serial_number} attempt {self.attempt_no} - {self.result}"
 
 class StatorTestingRecord(models.Model):
     serial_number = models.CharField(max_length=32, unique=True, db_index=True)
