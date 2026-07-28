@@ -206,30 +206,18 @@ async function loadSerials() {
       : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
       : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
       : 'bg-slate-100 text-slate-400';
-    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + escapeHtml(ptLabel) + '</span>';
     return '<tr class="hover:bg-white/60 transition-colors">'
-      + '<td class="px-6 py-3"><span class="font-mono font-bold text-primary text-sm">' + s.serial_number + '</span></td>'
-      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>'
-      + '<td class="px-6 py-3 font-medium text-slate-600">' + s.line_no + '</td>'
-      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + s.shift + '</span></td>'
+      + '<td class="px-6 py-3"><span class="font-mono font-bold text-primary text-sm">' + escapeHtml(s.serial_number) + '</span></td>'
+      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + escapeHtml(s.part_number) + '</span></td>'
+      + '<td class="px-6 py-3 font-medium text-slate-600">' + escapeHtml(s.line_no) + '</td>'
+      + '<td class="px-6 py-3"><span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + escapeHtml(s.shift) + '</span></td>'
       + '<td class="px-6 py-3">' + ptHtml + '</td>'
-      + '<td class="px-6 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status + '</span></td>'
-      + '<td class="px-6 py-3 text-right text-slate-400 text-xs font-medium whitespace-nowrap">' + ts + '</td>'
-      + '<td class="px-6 py-3 text-center"><button onclick="deleteSerial(' + s.id + ')" class="text-slate-400 hover:text-red-500 transition-colors" title="Delete Part"><span class="material-symbols-outlined text-[18px]">delete</span></button></td>'
+      + '<td class="px-6 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + escapeHtml(s.status) + '</span></td>'
+      + '<td class="px-6 py-3 text-right text-slate-400 text-xs font-medium whitespace-nowrap">' + escapeHtml(ts) + '</td>'
+      + '<td class="px-6 py-3 text-center"><span class="material-symbols-outlined text-[18px] text-slate-300" title="Immutable traceability record">lock</span></td>'
       + '</tr>';
   }).join('');
-}
-
-async function deleteSerial(id) {
-  const success = await API.deleteSerial(id);
-  if (success) {
-    showToast('Part deleted successfully', 'success');
-    loadSerials();
-    loadStats();
-    loadShiftProgress();
-  } else {
-    showToast('Failed to delete part', 'error');
-  }
 }
 
 var SHIFTS = [

@@ -2,9 +2,16 @@
 # Napino MES — Django ORM models
 from django.db import models
 from django.contrib.auth.models import User
+from django.db.models.functions import Lower
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from .rbac import ROLE_CHOICES, ROLE_VIEWER, STATION_CHOICES
+
+
+def _normalize_identifier(value):
+    if value is None:
+        return None
+    return str(value).strip().upper()
 
 
 class UserProfile(models.Model):
@@ -28,6 +35,15 @@ def create_user_profile(sender, instance, created, **kwargs):
 
 
 class Serial(models.Model):
+    LASER_DELIVERY_PENDING = 'Pending'
+    LASER_DELIVERY_DELIVERED = 'Delivered'
+    LASER_DELIVERY_FAILED = 'Failed'
+    LASER_DELIVERY_CHOICES = [
+        (LASER_DELIVERY_PENDING, 'Pending'),
+        (LASER_DELIVERY_DELIVERED, 'Delivered'),
+        (LASER_DELIVERY_FAILED, 'Failed'),
+    ]
+
     serial_number = models.CharField(max_length=32, unique=True, db_index=True)
     part_number   = models.CharField(max_length=10, default='')
     line_no       = models.CharField(max_length=4, default='')
@@ -35,13 +51,58 @@ class Serial(models.Model):
     part_type     = models.CharField(max_length=20, default='')
     created_at    = models.DateTimeField(auto_now_add=True)
     status        = models.CharField(max_length=20, default='Pending')
+    laser_delivery_status = models.CharField(
+        max_length=12,
+        choices=LASER_DELIVERY_CHOICES,
+        default=LASER_DELIVERY_PENDING,
+        db_default=LASER_DELIVERY_PENDING,
+        db_index=True,
+    )
+    laser_delivery_error = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        db_default='',
+    )
 
     class Meta:
         db_table = 'serials'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(Lower('serial_number'), name='serial_number_ci_unique'),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.serial_number = _normalize_identifier(self.serial_number)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.serial_number
+
+
+class DailySerialCounter(models.Model):
+    production_date = models.DateField(unique=True)
+    last_sequence = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'daily_serial_counters'
+        ordering = ['-production_date']
+
+    def __str__(self):
+        return f"{self.production_date}: {self.last_sequence}"
+
+
+class LoginThrottle(models.Model):
+    key = models.CharField(max_length=80, unique=True)
+    failure_count = models.PositiveIntegerField(default=0)
+    window_started_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'login_throttles'
+
+    def __str__(self):
+        return f"{self.key}: {self.failure_count}"
 
 
 class Part(models.Model):
@@ -56,6 +117,13 @@ class Part(models.Model):
     class Meta:
         db_table = 'parts'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(Lower('serial_number'), name='part_serial_number_ci_unique'),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.serial_number = _normalize_identifier(self.serial_number)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.part_name} — {self.part_number}"
@@ -82,6 +150,17 @@ class RotorBalancing(models.Model):
         indexes = [
             models.Index(fields=['serial_number', 'attempt_no']),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                Lower('serial_number'),
+                models.F('attempt_no'),
+                name='rotor_serial_attempt_ci_unique',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.serial_number = _normalize_identifier(self.serial_number)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.serial_number} attempt {self.attempt_no} - {self.result}"
@@ -134,6 +213,13 @@ class StatorTestingRecord(models.Model):
     class Meta:
         db_table = 'stator_testing'
         ordering = ['-imported_at']
+        constraints = [
+            models.UniqueConstraint(Lower('serial_number'), name='stator_serial_number_ci_unique'),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.serial_number = _normalize_identifier(self.serial_number)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.serial_number} - {self.final_result}"
@@ -150,6 +236,17 @@ class MotorAssembly(models.Model):
         db_table = 'motor_assembly'
         ordering = ['-updated_at']
         verbose_name_plural = 'motor assemblies'
+        constraints = [
+            models.UniqueConstraint(Lower('motor_serial'), name='motor_serial_ci_unique'),
+            models.UniqueConstraint(Lower('rotor_serial'), name='motor_rotor_serial_ci_unique'),
+            models.UniqueConstraint(Lower('stator_serial'), name='motor_stator_serial_ci_unique'),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.motor_serial = _normalize_identifier(self.motor_serial)
+        self.rotor_serial = _normalize_identifier(self.rotor_serial)
+        self.stator_serial = _normalize_identifier(self.stator_serial)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.motor_serial} = {self.rotor_serial} + {self.stator_serial}"
@@ -169,6 +266,18 @@ class MagnetInsertion(models.Model):
     class Meta:
         db_table = 'magnet_insertion'
         ordering = ['-timestamp']
+        constraints = [
+            models.UniqueConstraint(
+                Lower('stack_serial'),
+                Lower('magnet_serial'),
+                name='magnet_stack_pair_ci_unique',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.stack_serial = _normalize_identifier(self.stack_serial)
+        self.magnet_serial = _normalize_identifier(self.magnet_serial)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         result = 'PASS' if self.pass_fail else 'FAIL'

@@ -57,6 +57,43 @@ class MotorAssemblyApiTests(TestCase):
         self.assertIn('Rotor Sr No not found in rotor balancing records', response.data['errors'])
         self.assertIn('Stator Sr No not found in stator testing records', response.data['errors'])
 
+    def test_blocks_failed_latest_rotor_attempt(self):
+        RotorBalancing.objects.create(
+            serial_number='R001',
+            attempt_no=1,
+            result='Pass',
+        )
+        RotorBalancing.objects.create(
+            serial_number='R001',
+            attempt_no=2,
+            result='Fail',
+        )
+        self.create_stator('S001')
+
+        response = self.client.post(self.url, {
+            'motor_serial': 'M001',
+            'rotor_serial': 'R001',
+            'stator_serial': 'S001',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Latest rotor balancing result must be PASS', response.data['errors'])
+        self.assertFalse(MotorAssembly.objects.exists())
+
+    def test_blocks_failed_stator(self):
+        self.create_rotor('R001')
+        StatorTestingRecord.objects.create(serial_number='S001', final_result='Fail')
+
+        response = self.client.post(self.url, {
+            'motor_serial': 'M001',
+            'rotor_serial': 'R001',
+            'stator_serial': 'S001',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Stator testing final result must be PASS', response.data['errors'])
+        self.assertFalse(MotorAssembly.objects.exists())
+
     def test_blocks_rotor_linked_to_different_motor(self):
         self.create_rotor('R001')
         self.create_stator('S001')

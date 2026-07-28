@@ -1,15 +1,20 @@
 # core/views.py
 # Napino MES — All page views + DRF API views
 from io import BytesIO
+import hashlib
+import math
 import re
+import zipfile
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 from django.conf import settings
+from django.middleware.csrf import get_token
 from django.contrib.staticfiles import finders
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_GET
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -21,7 +26,7 @@ import datetime as dt
 from django.utils import timezone as django_tz
 from pymodbus.client import ModbusTcpClient
 import struct
-from django.db import IntegrityError, models, transaction
+from django.db import DatabaseError, IntegrityError, models, transaction
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -29,7 +34,16 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from utils.scanner import clean_scan_data
-from .models import Serial, Part, RotorBalancing, StatorTestingRecord, MotorAssembly, MagnetInsertion
+from .models import (
+    DailySerialCounter,
+    LoginThrottle,
+    MagnetInsertion,
+    MotorAssembly,
+    Part,
+    RotorBalancing,
+    Serial,
+    StatorTestingRecord,
+)
 from .rbac import (
     allowed_pages,
     api_access_required,
@@ -44,40 +58,97 @@ logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+
+def csrf_required(view_func):
+    """Apply CSRF protection to DRF function views, which are exempt by default."""
+    protected = csrf_protect(view_func)
+    protected.csrf_exempt = False
+    return protected
+
 # ── Shared file path ─────────────────────────────────────────────────────────
 LASER_SERIAL_FILE = r"\\172.16.61.202\Common Folder\Machine Data\LaserData\serial.txt"
 
 
 def write_to_shared_file(serial: str) -> None:
-    try:
-        with open(LASER_SERIAL_FILE, "w", encoding="utf-8", newline="") as f:
-            f.write(serial)
-    except OSError:
-        pass  # On localhost dev, shared drive won't exist
+    with open(LASER_SERIAL_FILE, "w", encoding="utf-8", newline="") as f:
+        f.write(serial)
 
 
 # ── Serial generation helper ─────────────────────────────────────────────────
-def generate_serial(part_number: str, line_no: str, shift: str) -> str:
-    """
-    Format: PPPPP + LL + S + YYDDD + NNN  (3-digit sequence)
-    """
+def generate_serial(part_number: str, line_no: str, shift: str, sequence: int) -> str:
+    """Build a serial from a sequence that has already been reserved."""
     today = django_tz.localdate()
     yy = today.strftime("%y")
     ddd = today.strftime("%j")
     date_str = f"{yy}{ddd}"
-
-    today_count = Serial.objects.filter(created_at__date=today).count()
-    seq = today_count + 1
-    if seq > 999:
+    if sequence > 999:
         raise ValueError("Daily sequence limit of 999 reached for today")
+    return f"{part_number}{line_no}{shift}{date_str}{sequence:03d}"
 
-    return f"{part_number}{line_no}{shift}{date_str}{seq:03d}"
+
+def create_serial_record(part_number: str, line_no: str, shift: str, part_type: str) -> Serial:
+    """Reserve a non-reusable daily sequence and persist its serial atomically."""
+    today = django_tz.localdate()
+    with transaction.atomic():
+        used_sequences = []
+        for value in Serial.objects.filter(created_at__date=today).values_list('serial_number', flat=True):
+            suffix = value[-3:]
+            if suffix.isdigit():
+                used_sequences.append(int(suffix))
+        counter, _ = DailySerialCounter.objects.get_or_create(
+            production_date=today,
+            defaults={'last_sequence': max(used_sequences, default=0)},
+        )
+        counter = DailySerialCounter.objects.select_for_update().get(pk=counter.pk)
+        sequence = counter.last_sequence + 1
+        serial_number = generate_serial(part_number, line_no, shift, sequence)
+        counter.last_sequence = sequence
+        counter.save(update_fields=['last_sequence'])
+        return Serial.objects.create(
+            serial_number=serial_number,
+            part_number=part_number,
+            line_no=line_no,
+            shift=shift,
+            part_type=part_type,
+            laser_delivery_status=Serial.LASER_DELIVERY_PENDING,
+        )
+
+
+def _validate_import_upload(file_obj) -> None:
+    if file_obj.size > settings.MAX_IMPORT_FILE_SIZE:
+        raise ValueError(
+            f'File exceeds the {settings.MAX_IMPORT_FILE_SIZE // (1024 * 1024)} MB upload limit.'
+        )
+
+    suffix = Path(file_obj.name or '').suffix.lower()
+    if suffix not in {'.xlsx', '.xls', '.csv', '.tsv'}:
+        raise ValueError('Unsupported file type. Upload XLSX, XLS, CSV, or TSV.')
+
+    file_obj.seek(0)
+    if zipfile.is_zipfile(file_obj):
+        file_obj.seek(0)
+        with zipfile.ZipFile(file_obj) as archive:
+            total_size = sum(member.file_size for member in archive.infolist())
+            if total_size > settings.MAX_IMPORT_UNCOMPRESSED_SIZE:
+                raise ValueError('Compressed workbook expands beyond the permitted size.')
+            for member in archive.infolist():
+                if member.compress_size and member.file_size / member.compress_size > 1000:
+                    raise ValueError('Workbook contains an unsafe compression ratio.')
+    file_obj.seek(0)
+
+
+def _validate_import_dimensions(row_count: int, column_count: int) -> None:
+    if row_count > settings.MAX_IMPORT_ROWS:
+        raise ValueError(f'Import exceeds the {settings.MAX_IMPORT_ROWS} row limit.')
+    if column_count > settings.MAX_IMPORT_COLUMNS:
+        raise ValueError(f'Import exceeds the {settings.MAX_IMPORT_COLUMNS} column limit.')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ── Page View Helpers ─────────────────────────────────────────────────────────
 
 def _render_page(request, template_name, active_page):
+    get_token(request)
     user = _user_ctx(request.user)
     return render(request, f'core/{template_name}', {
         'user': user,
@@ -87,6 +158,7 @@ def _render_page(request, template_name, active_page):
 
 # ── Page Views ────────────────────────────────────────────────────────────────
 
+@ensure_csrf_cookie
 def root_view(request):
     if request.user.is_authenticated:
         return redirect(first_allowed_url(request.user) or '/dashboard')
@@ -172,16 +244,73 @@ def _user_ctx(user):
 # AUTH API
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _login_rate_keys(request, username):
+    remote_addr = request.META.get('REMOTE_ADDR', '')
+    account = username.strip().lower()
+    return sorted({
+        f'ip:{hashlib.sha256(remote_addr.encode("utf-8")).hexdigest()}',
+        f'account:{hashlib.sha256(account.encode("utf-8")).hexdigest()}',
+    })
+
+
+def _login_rate_status(keys):
+    now = django_tz.now()
+    window = timedelta(seconds=settings.LOGIN_FAILURE_WINDOW_SECONDS)
+    limited = False
+    with transaction.atomic():
+        for key in keys:
+            throttle, _ = LoginThrottle.objects.get_or_create(
+                key=key,
+                defaults={'window_started_at': now},
+            )
+            throttle = LoginThrottle.objects.select_for_update().get(pk=throttle.pk)
+            if now - throttle.window_started_at >= window:
+                throttle.failure_count = 0
+                throttle.window_started_at = now
+                throttle.save(update_fields=['failure_count', 'window_started_at', 'updated_at'])
+            limited = limited or throttle.failure_count >= settings.LOGIN_FAILURE_LIMIT
+    return limited
+
+
+def _record_login_failure(keys):
+    now = django_tz.now()
+    window = timedelta(seconds=settings.LOGIN_FAILURE_WINDOW_SECONDS)
+    with transaction.atomic():
+        for key in keys:
+            throttle, _ = LoginThrottle.objects.get_or_create(
+                key=key,
+                defaults={'window_started_at': now},
+            )
+            throttle = LoginThrottle.objects.select_for_update().get(pk=throttle.pk)
+            if now - throttle.window_started_at >= window:
+                throttle.failure_count = 0
+                throttle.window_started_at = now
+            throttle.failure_count += 1
+            throttle.save(update_fields=['failure_count', 'window_started_at', 'updated_at'])
+
+
+@csrf_required
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def api_login(request):
-    username = request.data.get('username', '')
+    username = request.data.get('username', '').strip()
     password = request.data.get('password', '')
+    rate_keys = _login_rate_keys(request, username)
+    if _login_rate_status(rate_keys):
+        response = Response(
+            {'detail': 'Too many failed sign-in attempts. Try again later.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        response['Retry-After'] = str(settings.LOGIN_FAILURE_WINDOW_SECONDS)
+        return response
 
     user = authenticate(request, username=username, password=password)
     if user is None:
+        _record_login_failure(rate_keys)
         return Response({'detail': 'Invalid username or password'}, status=status.HTTP_401_UNAUTHORIZED)
 
+    account_key = next(key for key in rate_keys if key.startswith('account:'))
+    LoginThrottle.objects.filter(key=account_key).delete()
     login(request, user)
     full_name = user.get_full_name() or user.username
     return Response({
@@ -191,8 +320,8 @@ def api_login(request):
     })
 
 
+@csrf_required
 @api_view(['POST'])
-@permission_classes([AllowAny])
 def api_logout(request):
     logout(request)
     return Response({'status': 'logged out'})
@@ -218,25 +347,35 @@ def api_generate(request):
         return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
 
     try:
-        serial = generate_serial(part_number, line_no, shift_val.upper())
-    except ValueError as e:
-        return Response({'detail': str(e)}, status=400)
-
-    # Write to shared laser file
-    write_to_shared_file(serial)
+        entry = create_serial_record(
+            part_number,
+            line_no,
+            shift_val.upper(),
+            part_type or '',
+        )
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    except (IntegrityError, DatabaseError):
+        logger.exception('Unable to reserve and persist a laser serial')
+        return Response({'detail': 'Unable to create serial record'}, status=500)
 
     try:
-        Serial.objects.create(
-            serial_number=serial,
-            part_number=part_number,
-            line_no=line_no,
-            shift=shift_val.upper(),
-            part_type=part_type or '',
-        )
-    except Exception as e:
-        return Response({'detail': f'Database error: {e}'}, status=500)
+        write_to_shared_file(entry.serial_number)
+    except OSError as exc:
+        logger.exception('Unable to deliver serial %s to the laser share', entry.serial_number)
+        entry.laser_delivery_status = Serial.LASER_DELIVERY_FAILED
+        entry.laser_delivery_error = str(exc)[:255]
+        entry.save(update_fields=['laser_delivery_status', 'laser_delivery_error'])
+        return Response({
+            'serial': entry.serial_number,
+            'status': 'delivery_failed',
+            'detail': 'Serial was reserved but could not be delivered to the laser machine.',
+        }, status=503)
 
-    return Response({'serial': serial, 'status': 'success'})
+    entry.laser_delivery_status = Serial.LASER_DELIVERY_DELIVERED
+    entry.laser_delivery_error = ''
+    entry.save(update_fields=['laser_delivery_status', 'laser_delivery_error'])
+    return Response({'serial': entry.serial_number, 'status': 'success'})
 
 
 @api_view(['GET'])
@@ -257,6 +396,7 @@ def api_serials(request):
             'part_type': s.part_type or '',
             'created_at': s.created_at.astimezone(IST).isoformat() if s.created_at else '—',
             'status': s.status,
+            'laser_delivery_status': s.laser_delivery_status,
             'rotor_result': getattr(_latest_rotor_balancing(s.serial_number.strip()), 'result', None)
         })
         
@@ -272,6 +412,7 @@ def api_serials(request):
             'part_type': r.rotor_type or 'Rotor',
             'created_at': r.recorded_at.astimezone(IST).isoformat() if r.recorded_at else (r.imported_at.astimezone(IST).isoformat() if r.imported_at else '—'),
             'status': 'Imported',
+            'laser_delivery_status': 'N/A',
             'rotor_result': r.result
         })
         
@@ -282,11 +423,39 @@ def api_serials(request):
 @api_access_required('serial_delete')
 def api_delete_serial(request, serial_id):
     try:
-        serial = Serial.objects.get(id=serial_id)
+        Serial.objects.get(id=serial_id)
     except Serial.DoesNotExist:
         return Response({'detail': 'Serial not found'}, status=404)
-    serial.delete()
-    return Response({'status': 'deleted'})
+    return Response({
+        'detail': 'Production traceability records are immutable and cannot be deleted.'
+    }, status=409)
+
+
+@api_view(['POST'])
+@api_access_required('laser_write')
+def api_retry_serial_delivery(request, serial_id):
+    try:
+        entry = Serial.objects.get(id=serial_id)
+    except Serial.DoesNotExist:
+        return Response({'detail': 'Serial not found'}, status=404)
+
+    try:
+        write_to_shared_file(entry.serial_number)
+    except OSError as exc:
+        logger.exception('Unable to retry delivery for serial %s', entry.serial_number)
+        entry.laser_delivery_status = Serial.LASER_DELIVERY_FAILED
+        entry.laser_delivery_error = str(exc)[:255]
+        entry.save(update_fields=['laser_delivery_status', 'laser_delivery_error'])
+        return Response({
+            'serial': entry.serial_number,
+            'status': 'delivery_failed',
+            'detail': 'Serial could not be delivered to the laser machine.',
+        }, status=503)
+
+    entry.laser_delivery_status = Serial.LASER_DELIVERY_DELIVERED
+    entry.laser_delivery_error = ''
+    entry.save(update_fields=['laser_delivery_status', 'laser_delivery_error'])
+    return Response({'serial': entry.serial_number, 'status': 'delivered'})
 
 
 @api_view(['POST'])
@@ -487,7 +656,7 @@ class _TraceabilityCanvas:
 
 
 def _section_heading(text, styles):
-    return Paragraph(text, styles['SectionHeading'])
+    return Paragraph(xml_escape(str(text)), styles['SectionHeading'])
 
 
 def _details_table(rows, styles, col_widths=None):
@@ -497,8 +666,8 @@ def _details_table(rows, styles, col_widths=None):
     table_data = []
     for label, value in rows:
         table_data.append([
-            Paragraph(str(label), styles['FieldLabel']),
-            Paragraph(_display_value(value), styles['FieldValue']),
+            Paragraph(xml_escape(str(label)), styles['FieldLabel']),
+            Paragraph(xml_escape(_display_value(value)), styles['FieldValue']),
         ])
 
     table = Table(table_data, colWidths=col_widths or [52 * mm, 118 * mm], hAlign='LEFT')
@@ -524,11 +693,11 @@ def _result_summary_table(link, rotor, stator, styles):
             Paragraph('Stator Result', styles['SummaryLabel']),
         ],
         [
-            Paragraph(link.motor_serial, styles['SummaryValue']),
-            Paragraph(link.rotor_serial, styles['SummaryValue']),
-            Paragraph(rotor.result if rotor else 'Pending', styles['SummaryValue']),
-            Paragraph(link.stator_serial, styles['SummaryValue']),
-            Paragraph(stator.final_result if stator else 'Pending', styles['SummaryValue']),
+            Paragraph(xml_escape(link.motor_serial), styles['SummaryValue']),
+            Paragraph(xml_escape(link.rotor_serial), styles['SummaryValue']),
+            Paragraph(xml_escape(rotor.result if rotor else 'Pending'), styles['SummaryValue']),
+            Paragraph(xml_escape(link.stator_serial), styles['SummaryValue']),
+            Paragraph(xml_escape(stator.final_result if stator else 'Pending'), styles['SummaryValue']),
         ],
     ]
     table = Table(data, colWidths=[35 * mm, 35 * mm, 30 * mm, 35 * mm, 35 * mm], hAlign='LEFT')
@@ -749,18 +918,20 @@ def api_traceability_search(request):
     return Response(response_data)
 
 
-@require_GET
+@api_view(['GET'])
+@api_access_required('traceability_read')
 def api_scanner_poll(request):
     try:
         from utils.serial_reader import read_scan_line
 
         cleaned_value = read_scan_line(port="COM1", baudrate=115200, timeout=1)
         if cleaned_value:
-            return JsonResponse({"data": cleaned_value, "received": True})
+            return Response({"data": cleaned_value, "received": True})
 
-        return JsonResponse({"received": False})
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+        return Response({"received": False})
+    except Exception:
+        logger.exception('Scanner poll failed')
+        return Response({"detail": "Scanner unavailable"}, status=503)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -809,7 +980,7 @@ def api_check_serial(request):
 @api_view(['POST'])
 @api_access_required('add_part_write')
 def api_add_part(request):
-    serial_number = request.data.get('serial_number', '')
+    serial_number = request.data.get('serial_number', '').strip().upper()
     part_number = request.data.get('part_number', '')
     part_name = request.data.get('part_name', '')
     line_no = request.data.get('line_no', '')
@@ -824,7 +995,7 @@ def api_add_part(request):
     if shift_val.upper() not in ('A', 'B', 'C', 'G'):
         return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
 
-    if Part.objects.filter(serial_number=serial_number).exists():
+    if Part.objects.filter(serial_number__iexact=serial_number).exists():
         return Response({'detail': 'Serial number already exists.'}, status=400)
 
     user = request.user
@@ -848,8 +1019,11 @@ def api_add_part(request):
             'added_by': new_part.added_by,
             'created_at': new_part.created_at.astimezone(IST).isoformat() if new_part.created_at else '—',
         })
-    except Exception as e:
-        return Response({'detail': f'Database error: {e}'}, status=500)
+    except IntegrityError:
+        return Response({'detail': 'Serial number already exists.'}, status=409)
+    except DatabaseError:
+        logger.exception('Could not add part')
+        return Response({'detail': 'Could not add part.'}, status=500)
 
 
 @api_view(['GET'])
@@ -875,12 +1049,12 @@ def api_parts(request):
 @api_access_required('part_delete')
 def api_delete_part(request, part_id):
     try:
-        part = Part.objects.get(id=part_id)
+        Part.objects.get(id=part_id)
     except Part.DoesNotExist:
         return Response({'detail': 'Part not found'}, status=404)
-
-    part.delete()
-    return Response({'status': 'deleted'})
+    return Response({
+        'detail': 'Production traceability records are immutable and cannot be deleted.'
+    }, status=409)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -912,7 +1086,7 @@ def api_production_log(request):
     for s in serials:
         if not s.created_at:
             continue
-        d = s.created_at.strftime('%Y-%m-%d')
+        d = django_tz.localtime(s.created_at).date().isoformat()
         if d not in daily_data:
             continue
         daily_data[d]['total'] += 1
@@ -1078,8 +1252,10 @@ def api_rotor_balancing_import(request):
         return Response({'detail': 'No file uploaded'}, status=400)
 
     try:
-        wb = openpyxl.load_workbook(file_obj, data_only=True)
+        _validate_import_upload(file_obj)
+        wb = openpyxl.load_workbook(file_obj, data_only=True, read_only=True)
         sheet = wb.active
+        _validate_import_dimensions(sheet.max_row, sheet.max_column)
         
         # Read header to find column indices
         headers = []
@@ -1161,8 +1337,11 @@ def api_rotor_balancing_import(request):
                 
         return Response({'detail': f'{imported} rotor balancing attempts imported, {updated} existing attempts updated.'})
 
-    except Exception as e:
-        return Response({'detail': f'Error parsing file: {str(e)}'}, status=500)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    except Exception:
+        logger.exception('Error importing rotor balancing records')
+        return Response({'detail': 'Could not parse the uploaded workbook.'}, status=400)
 
 
 @api_view(['GET'])
@@ -1196,11 +1375,13 @@ def api_rotor_balancing_by_serial(request, serial):
 @api_access_required('rotor_write')
 def api_rotor_balancing_delete(request, pk):
     try:
-        record = RotorBalancing.objects.get(pk=pk)
-        record.delete()
-        return Response({'success': True})
+        RotorBalancing.objects.get(pk=pk)
     except RotorBalancing.DoesNotExist:
         return Response({'success': False, 'error': 'Record not found'}, status=404)
+    return Response({
+        'success': False,
+        'detail': 'Production traceability records are immutable and cannot be deleted.',
+    }, status=409)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1213,6 +1394,11 @@ def api_stator_testing_import(request):
     file_obj = request.FILES.get('file')
     if not file_obj:
         return Response({'detail': 'No file uploaded'}, status=400)
+
+    try:
+        _validate_import_upload(file_obj)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
 
     try:
         # 1. Try reading as TSV (handles cases where .xls is actually TSV)
@@ -1237,6 +1423,7 @@ def api_stator_testing_import(request):
                 return Response({'detail': "Could not parse file. Please upload a valid TSV or Excel file."}, status=400)
 
     try:
+        _validate_import_dimensions(len(df.index), len(df.columns))
         # 2. Normalize Column Names (strip whitespace and uppercase for matching)
         df.columns = [str(c).strip().upper() for c in df.columns]
         
@@ -1282,8 +1469,23 @@ def api_stator_testing_import(request):
             'HIGH VOLTAGE': ['HIGH VOLTAGE', 'HV', 'HIPOT'],
             'HIGH VOLTAGE RESULT': ['HIGH VOLTAGE RESULT', 'HV RESULT', 'HV_RESULT', 'HIPOT RESULT'],
             'SURGE VOLTAGE': ['SURGE VOLTAGE', 'SURGE'],
+            'SURGE MAIN (R/Y) - ERROR%': [
+                'SURGE MAIN (R/Y) - ERROR%',
+                'SURGE MAIN R/Y ERROR%',
+                'SURGE RY ERROR',
+            ],
             'SURGE R/Y RESULT': ['SURGE R/Y RESULT', 'SURGE RY RESULT', 'SURGE_RY_RESULT'],
+            'SURGE AUX (Y/B) - ERROR%': [
+                'SURGE AUX (Y/B) - ERROR%',
+                'SURGE AUX Y/B ERROR%',
+                'SURGE YB ERROR',
+            ],
             'SURGE AUX (Y/B) RESULT': ['SURGE AUX (Y/B) RESULT', 'SURGE YB RESULT', 'SURGE_YB_RESULT'],
+            'SURGE MAIN-AUX (B/R) - ERROR%': [
+                'SURGE MAIN-AUX (B/R) - ERROR%',
+                'SURGE MAIN-AUX B/R ERROR%',
+                'SURGE BR ERROR',
+            ],
             'SURGE MAIN-AUX (B/R) RESULT': ['SURGE MAIN-AUX (B/R) RESULT', 'SURGE BR RESULT', 'SURGE_BR_RESULT'],
             'INDUCTANCE-1': ['INDUCTANCE-1', 'L1', 'IND-1'],
             'INDUCTANCE-1 RESULT': ['INDUCTANCE-1 RESULT', 'L1 RESULT', 'L1_RESULT'],
@@ -1311,11 +1513,11 @@ def api_stator_testing_import(request):
             return None
 
         for index, row in df.iterrows():
-            sn_val = get_val(row, 'BAR CODE')
+            sn_val = (get_val(row, 'BAR CODE') or '').upper()
             if not sn_val or sn_val.lower() == 'nan': 
                 continue
                 
-            if StatorTestingRecord.objects.filter(serial_number=sn_val).exists():
+            if StatorTestingRecord.objects.filter(serial_number__iexact=sn_val).exists():
                 skipped += 1
                 continue
 
@@ -1325,9 +1527,14 @@ def api_stator_testing_import(request):
                 try:
                     row_dt = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
                     if pd.notna(row_dt):
+                        plant_timezone = django_tz.get_current_timezone()
                         if row_dt.tzinfo is None:
-                            row_dt = row_dt.tz_localize('UTC').astimezone(IST)
-                        recorded_at = row_dt.to_pydatetime()
+                            recorded_at = django_tz.make_aware(
+                                row_dt.to_pydatetime(),
+                                plant_timezone,
+                            )
+                        else:
+                            recorded_at = row_dt.to_pydatetime().astimezone(plant_timezone)
                 except Exception:
                     pass
 
@@ -1371,9 +1578,11 @@ def api_stator_testing_import(request):
 
         return Response({'detail': f'{imported} records imported, {skipped} skipped (already existed).'})
 
-    except Exception as e:
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    except Exception:
         logger.exception('Error importing stator testing records')
-        return Response({'detail': f'Error parsing file: {str(e)}'}, status=500)
+        return Response({'detail': 'Could not import the uploaded file.'}, status=400)
 
 
 @api_view(['GET'])
@@ -1403,11 +1612,13 @@ def api_stator_testing_by_serial(request, serial):
 @api_access_required('stator_write')
 def api_stator_testing_delete(request, pk):
     try:
-        record = StatorTestingRecord.objects.get(pk=pk)
-        record.delete()
-        return Response({'success': True})
+        StatorTestingRecord.objects.get(pk=pk)
     except StatorTestingRecord.DoesNotExist:
         return Response({'success': False, 'error': 'Record not found'}, status=404)
+    return Response({
+        'success': False,
+        'detail': 'Production traceability records are immutable and cannot be deleted.',
+    }, status=409)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1514,9 +1725,9 @@ def api_motor_assembly(request):
             )
         return Response([_motor_assembly_payload(r) for r in records[:200]])
 
-    motor_serial = request.data.get('motor_serial', '').strip()
-    rotor_serial = request.data.get('rotor_serial', '').strip()
-    stator_serial = request.data.get('stator_serial', '').strip()
+    motor_serial = request.data.get('motor_serial', '').strip().upper()
+    rotor_serial = request.data.get('rotor_serial', '').strip().upper()
+    stator_serial = request.data.get('stator_serial', '').strip().upper()
 
     if not motor_serial:
         return Response({'detail': 'Motor Sr No is required'}, status=400)
@@ -1535,6 +1746,14 @@ def api_motor_assembly(request):
         missing.append('Stator Sr No not found in stator testing records')
     if missing:
         return Response({'detail': 'Validation failed', 'errors': missing}, status=400)
+
+    failed = []
+    if str(rotor.result).strip().lower() != 'pass':
+        failed.append('Latest rotor balancing result must be PASS')
+    if str(stator.final_result).strip().lower() != 'pass':
+        failed.append('Stator testing final result must be PASS')
+    if failed:
+        return Response({'detail': 'Validation failed', 'errors': failed}, status=400)
 
     rotor_serial = rotor.serial_number
     stator_serial = stator.serial_number
@@ -1610,10 +1829,10 @@ def api_magnet_insertion_list(request):
 @api_view(['POST'])
 @api_access_required('magnet_write')
 def api_magnet_insertion_create(request):
-    stack_serial = request.data.get('stack_serial', '').strip()
-    magnet_serial = request.data.get('magnet_serial', '').strip()
+    stack_serial = request.data.get('stack_serial', '').strip().upper()
+    magnet_serial = request.data.get('magnet_serial', '').strip().upper()
     cycle_time = request.data.get('cycle_time')
-    pass_fail = request.data.get('pass_fail', True)
+    pass_fail = request.data.get('pass_fail')
     shift = request.data.get('shift', '').strip().upper()
 
     if not stack_serial:
@@ -1622,6 +1841,8 @@ def api_magnet_insertion_create(request):
         return Response({'detail': 'Magnet serial is required'}, status=400)
     if cycle_time is None:
         return Response({'detail': 'Cycle time is required'}, status=400)
+    if not isinstance(pass_fail, bool):
+        return Response({'detail': 'pass_fail must be a JSON boolean'}, status=400)
     if shift not in ('A', 'B', 'C', 'G'):
         return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
 
@@ -1629,10 +1850,15 @@ def api_magnet_insertion_create(request):
         cycle_time = float(cycle_time)
     except (ValueError, TypeError):
         return Response({'detail': 'Cycle time must be a number'}, status=400)
+    if not math.isfinite(cycle_time) or not 0 < cycle_time <= 3600:
+        return Response(
+            {'detail': 'Cycle time must be greater than 0 and no more than 3600 seconds'},
+            status=400,
+        )
 
     existing = MagnetInsertion.objects.filter(
-        stack_serial=stack_serial,
-        magnet_serial=magnet_serial,
+        stack_serial__iexact=stack_serial,
+        magnet_serial__iexact=magnet_serial,
     ).first()
     if existing:
         return Response({
@@ -1656,7 +1882,7 @@ def api_magnet_insertion_create(request):
             stack_serial=stack_serial,
             magnet_serial=magnet_serial,
             cycle_time=cycle_time,
-            pass_fail=bool(pass_fail),
+            pass_fail=pass_fail,
             shift=shift,
             operator=operator,
         )
@@ -1671,8 +1897,14 @@ def api_magnet_insertion_create(request):
             'operator': record.operator.get_full_name() if record.operator else '',
             'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
         }, status=201)
-    except Exception as e:
-        return Response({'detail': f'Database error: {e}'}, status=500)
+    except IntegrityError:
+        return Response(
+            {'detail': 'This stack and magnet serial pair already exists.'},
+            status=409,
+        )
+    except DatabaseError:
+        logger.exception('Could not create magnet insertion record')
+        return Response({'detail': 'Could not save magnet insertion record.'}, status=500)
 
 
 @api_view(['GET'])
@@ -1696,11 +1928,13 @@ def api_magnet_insertion_stats(request):
 @api_access_required('magnet_write')
 def api_magnet_insertion_delete(request, pk):
     try:
-        record = MagnetInsertion.objects.get(pk=pk)
-        record.delete()
-        return Response({'success': True})
+        MagnetInsertion.objects.get(pk=pk)
     except MagnetInsertion.DoesNotExist:
         return Response({'success': False, 'error': 'Record not found'}, status=404)
+    return Response({
+        'success': False,
+        'detail': 'Production traceability records are immutable and cannot be deleted.',
+    }, status=409)
 
 
 def _decode_modbus_string(registers):

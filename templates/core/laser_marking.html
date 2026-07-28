@@ -266,7 +266,10 @@ async function loadSavedParts() {
     var parts = await res.json();
     savedPartsData = parts;
     var dl = document.getElementById('saved-parts');
-    dl.innerHTML = parts.map(function(p) { return '<option value="' + p.part_number + '">' + p.part_name + ' (Line: ' + p.line_no + ', Shift: ' + p.shift + ')</option>'; }).join('');
+    dl.innerHTML = parts.map(function(p) {
+      return '<option value="' + escapeHtml(p.part_number) + '">' + escapeHtml(p.part_name)
+        + ' (Line: ' + escapeHtml(p.line_no) + ', Shift: ' + escapeHtml(p.shift) + ')</option>';
+    }).join('');
   } catch(e) {}
 }
 
@@ -293,10 +296,10 @@ function updatePreview() {
   var ddd = String(days).padStart(3, '0');
   document.getElementById('sn-preview').textContent = part + line + shift + yy + ddd + '???';
   document.getElementById('preview-segments').innerHTML =
-    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Part: ' + part + '</span> ' +
-    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Line: ' + line + '</span> ' +
-    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Shift: ' + shift + '</span> ' +
-    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Date: ' + yy + ddd + '</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Part: ' + escapeHtml(part) + '</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Line: ' + escapeHtml(line) + '</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Shift: ' + escapeHtml(shift) + '</span> ' +
+    '<span class="px-2 py-0.5 bg-slate-800 rounded text-slate-300">Date: ' + escapeHtml(yy + ddd) + '</span> ' +
     '<span class="px-2 py-0.5 bg-indigo-900 rounded text-indigo-300">Seq: NNN (3-digit)</span>';
 }
 
@@ -413,8 +416,8 @@ function addToLog(sn) {
   el.className = 'flex items-center gap-3 py-2 px-3 rounded-lg bg-green-50 border border-green-100 fade-in';
   el.innerHTML = '<span class="material-symbols-outlined text-base text-green-500">check_circle</span>' +
     '<div class="flex-1 min-w-0">' +
-    '<p class="font-mono text-xs font-bold text-slate-900 truncate">' + sn + '</p>' +
-    '<p class="text-[10px] text-slate-400">' + time + '</p>' +
+    '<p class="font-mono text-xs font-bold text-slate-900 truncate">' + escapeHtml(sn) + '</p>' +
+    '<p class="text-[10px] text-slate-400">' + escapeHtml(time) + '</p>' +
     '</div>';
   if (logEntries.length === 1) log.innerHTML = '';
   log.insertBefore(el, log.firstChild);
@@ -440,6 +443,17 @@ async function markDone(serial) {
   }
 }
 
+async function retryDelivery(id) {
+  var res = await fetch('/api/serials/' + id + '/retry-delivery', { method: 'POST' });
+  var data = await res.json();
+  if (res.ok) {
+    showToast('Serial delivered to laser: ' + data.serial, 'success');
+    loadSerials();
+  } else {
+    showToast(data.detail || 'Laser delivery failed', 'error');
+  }
+}
+
 async function loadSerials() {
   const serials = await API.fetchSerials();
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -457,8 +471,11 @@ async function loadSerials() {
   tbody.innerHTML = todaySerials.map(function(s) {
     var statusClass = s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100';
     var dotClass = s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500';
-    var actionCell = s.status !== 'Marked'
-      ? '<button onclick="markDone(\'' + s.serial_number + '\')" class="text-xs font-bold text-primary hover:underline">Mark Done</button>'
+    var encodedSerial = encodeURIComponent(s.serial_number || '').replace(/'/g, '%27');
+    var actionCell = s.laser_delivery_status === 'Failed'
+      ? '<button onclick="retryDelivery(' + s.id + ')" class="text-xs font-bold text-red-600 hover:underline">Retry Delivery</button>'
+      : s.status !== 'Marked'
+      ? '<button onclick="markDone(decodeURIComponent(\'' + encodedSerial + '\'))" class="text-xs font-bold text-primary hover:underline">Mark Done</button>'
       : '<span class="text-xs text-slate-300">&#8212;</span>';
     var timeCell = (s.created_at && s.created_at !== '--')
       ? new Date(s.created_at).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })
@@ -469,16 +486,17 @@ async function loadSerials() {
       : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
       : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
       : 'bg-slate-100 text-slate-400';
-    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + escapeHtml(ptLabel) + '</span>';
     return '<tr class="hover:bg-slate-50 transition-colors">'
-      + '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + s.serial_number + '</span></td>'
-      + '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>'
-      + '<td class="px-5 py-3 text-sm text-slate-600 font-medium">' + s.line_no + '</td>'
-      + '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">' + s.shift + '</span></td>'
+      + '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + escapeHtml(s.serial_number) + '</span></td>'
+      + '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold">' + escapeHtml(s.part_number) + '</span></td>'
+      + '<td class="px-5 py-3 text-sm text-slate-600 font-medium">' + escapeHtml(s.line_no) + '</td>'
+      + '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">' + escapeHtml(s.shift) + '</span></td>'
       + '<td class="px-5 py-3">' + ptHtml + '</td>'
-      + '<td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2 py-0.5 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status + '</span></td>'
+      + '<td class="px-5 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2 py-0.5 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + escapeHtml(s.status) + '</span>'
+      + (s.laser_delivery_status === 'Failed' ? '<span class="ml-2 text-[10px] font-bold text-red-600">DELIVERY FAILED</span>' : '') + '</td>'
       + '<td class="px-5 py-3">' + actionCell + '</td>'
-      + '<td class="px-5 py-3 text-right text-xs text-slate-400">' + timeCell + '</td>'
+      + '<td class="px-5 py-3 text-right text-xs text-slate-400">' + escapeHtml(timeCell) + '</td>'
       + '</tr>';
   }).join('');
 }

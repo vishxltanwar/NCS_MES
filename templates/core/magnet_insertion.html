@@ -115,6 +115,32 @@
         </div>
       </div>
 
+      <div id="manual-process-panel" class="rounded-lg border border-amber-200 bg-amber-50/70 p-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <p class="text-xs font-bold text-amber-900">Manual process fallback</p>
+            <p class="mt-1 text-[11px] text-amber-700">Use only when the PLC supplies both serials but does not supply cycle time or result.</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3 min-w-[360px]">
+            <label class="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+              Cycle time (seconds)
+              <input id="manual-cycle-time" type="number" min="0.01" max="3600" step="0.01"
+                oninput="applyManualProcessData()"
+                class="mt-1 w-full rounded-md border-amber-200 bg-white text-sm font-mono text-slate-800">
+            </label>
+            <label class="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+              Result
+              <select id="manual-result" onchange="applyManualProcessData()"
+                class="mt-1 w-full rounded-md border-amber-200 bg-white text-sm font-bold text-slate-800">
+                <option value="">Select result</option>
+                <option value="pass">PASS</option>
+                <option value="fail">FAIL</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
       <!-- Shift + Save -->
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
@@ -172,6 +198,7 @@
 let currentShift = '';
 let lastSavedStackSerial = null;
 let isSaving = false;
+let manualProcessOverride = false;
 let plcState = {
   connected: false,
   cycle_complete: false,
@@ -191,6 +218,22 @@ function checkSaveEnabled() {
     && plcState.pass_fail !== null
     && plcState.cycle_time !== null;
   btn.disabled = !enabled;
+}
+
+function applyManualProcessData() {
+  const cycleInput = document.getElementById('manual-cycle-time');
+  const resultInput = document.getElementById('manual-result');
+  const cycle = Number(cycleInput.value);
+  manualProcessOverride = cycleInput.value !== '' || resultInput.value !== '';
+  plcState.cycle_time = Number.isFinite(cycle) && cycle > 0 ? cycle : null;
+  plcState.pass_fail = resultInput.value === 'pass' ? true : resultInput.value === 'fail' ? false : null;
+  updatePlcUI();
+}
+
+function resetManualProcessData() {
+  manualProcessOverride = false;
+  document.getElementById('manual-cycle-time').value = '';
+  document.getElementById('manual-result').value = '';
 }
 
 async function saveRecord() {
@@ -213,8 +256,8 @@ async function saveRecord() {
       body: JSON.stringify({
         stack_serial: plcState.stack_serial,
         magnet_serial: plcState.magnet_serial,
-        cycle_time: plcState.cycle_time || 0,
-        pass_fail: plcState.pass_fail !== false,
+        cycle_time: plcState.cycle_time,
+        pass_fail: plcState.pass_fail,
         shift: currentShift,
       })
     });
@@ -231,6 +274,7 @@ async function saveRecord() {
       plcState.cycle_time = null;
       plcState.magnet_serial = null;
       plcState.stack_serial = null;
+      resetManualProcessData();
       updatePlcUI();
 
       // Reload records and stats
@@ -324,7 +368,16 @@ setInterval(async () => {
     if (res.ok) {
       const data = await res.json();
       if (data.connected) {
-        plcState = { ...data };
+        const sameCycle = data.stack_serial === plcState.stack_serial
+          && data.magnet_serial === plcState.magnet_serial;
+        const manualCycleTime = manualProcessOverride && sameCycle ? plcState.cycle_time : null;
+        const manualResult = manualProcessOverride && sameCycle ? plcState.pass_fail : null;
+        if (!sameCycle) resetManualProcessData();
+        plcState = {
+          ...data,
+          cycle_time: data.cycle_time ?? manualCycleTime,
+          pass_fail: data.pass_fail ?? manualResult,
+        };
         
         // Auto-save only when PLC provides full cycle data (not stub pass/fail/time).
         if (plcState.cycle_complete
@@ -394,23 +447,23 @@ function renderTable(data) {
     return `
       <tr class="hover:bg-[#F8F9FA] transition-all">
         <td class="px-5 py-3">
-          <span class="font-mono font-medium text-[#3DAA6D] text-sm">${r.stack_serial}</span>
+          <span class="font-mono font-medium text-[#3DAA6D] text-sm">${escapeHtml(r.stack_serial)}</span>
         </td>
         <td class="px-5 py-3">
-          <span class="font-mono font-medium text-slate-700 text-sm">${r.magnet_serial}</span>
+          <span class="font-mono font-medium text-slate-700 text-sm">${escapeHtml(r.magnet_serial)}</span>
         </td>
         <td class="px-5 py-3 text-center">
           <span class="font-mono text-sm text-slate-700">${r.cycle_time !== null ? r.cycle_time.toFixed(1) : '—'} s</span>
         </td>
         <td class="px-5 py-3 text-center">
           <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${bColor} px-2.5 py-1 rounded-full shadow-sm">
-            <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${r.result}
+            <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${escapeHtml(r.result)}
           </span>
         </td>
         <td class="px-5 py-3 text-center">
-          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-600">${r.shift}</span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-600">${escapeHtml(r.shift)}</span>
         </td>
-        <td class="px-5 py-3 text-sm text-slate-500">${ts}</td>
+        <td class="px-5 py-3 text-sm text-slate-500">${escapeHtml(ts)}</td>
       </tr>
     `;
   });

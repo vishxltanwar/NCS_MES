@@ -154,7 +154,7 @@ function renderTable(data) {
   if (data.length === 0) {
     const hasSearch = (document.getElementById('serial-search')?.value || '').trim();
     const message = hasSearch ? 'No records match that serial number.' : 'No records available. Import a TSV file to see data.';
-    tbody.innerHTML = `<tr><td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">${message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="2" class="px-5 py-6 text-center text-slate-400 text-xs">${escapeHtml(message)}</td></tr>`;
     return;
   }
 
@@ -165,7 +165,7 @@ function renderTable(data) {
     const bColor = isPass ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
     return `
       <span class="inline-block ${bColor} text-xs font-medium px-2 py-0.5 rounded-full">
-        ${val}
+        ${escapeHtml(val)}
       </span>
     `;
   };
@@ -177,7 +177,7 @@ function renderTable(data) {
     const dotColor = isPass ? 'bg-green-500' : 'bg-red-500';
     const finalResultHtml = `
       <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${bColor} px-2.5 py-1 rounded-full shadow-sm">
-        <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${r.final_result}
+        <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${escapeHtml(r.final_result)}
       </span>
     `;
     
@@ -188,7 +188,7 @@ function renderTable(data) {
       <tr class="hover:bg-[#F8F9FA] transition-all cursor-pointer ${isExpanded ? 'bg-[#F8F9FA]' : ''}" onclick="toggleRow(${r.id})">
         <td class="px-5 py-3">
           <span class="font-mono font-medium text-primary text-sm hover:underline decoration-1 underline-offset-4">
-            ${r.serial_number}
+            ${escapeHtml(r.serial_number)}
           </span>
         </td>
         <td class="px-5 py-3 text-right">
@@ -217,19 +217,19 @@ function renderTable(data) {
                     <tbody class="divide-y divide-gray-100">
                       <tr>
                         <td class="px-2 py-1 font-semibold text-gray-500 w-1/3">Operator</td>
-                        <td class="px-2 py-1 text-gray-800 text-right">${r.operator || '—'}</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${escapeHtml(r.operator || '—')}</td>
                       </tr>
                       <tr>
                         <td class="px-2 py-1 font-semibold text-gray-500">Part Type/Code</td>
-                        <td class="px-2 py-1 text-gray-800 text-right">${r.code_number || '—'}</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${escapeHtml(r.code_number || '—')}</td>
                       </tr>
                       <tr>
                         <td class="px-2 py-1 font-semibold text-gray-500">Symmetry</td>
-                        <td class="px-2 py-1 text-gray-800 text-right">${r.symmetry || '—'}</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${escapeHtml(r.symmetry || '—')}</td>
                       </tr>
                       <tr>
                         <td class="px-2 py-1 font-semibold text-gray-500">Recorded At</td>
-                        <td class="px-2 py-1 text-gray-800 text-right">${r.recorded_at || '—'}</td>
+                        <td class="px-2 py-1 text-gray-800 text-right">${escapeHtml(r.recorded_at || '—')}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -251,17 +251,17 @@ function renderTable(data) {
                     <tbody class="divide-y divide-gray-100">
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">R/Y</td>
-                        <td class="px-2 py-1 font-mono">${r.ry || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.ry || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.ry_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Y/B</td>
-                        <td class="px-2 py-1 font-mono">${r.yb || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.yb || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.yb_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">B/R</td>
-                        <td class="px-2 py-1 font-mono">${r.br || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.br || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.br_result)}</td>
                       </tr>
                     </tbody>
@@ -284,17 +284,17 @@ function renderTable(data) {
                     <tbody class="divide-y divide-gray-100">
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">THD</td>
-                        <td class="px-2 py-1 font-mono">${r.thd_win || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.thd_win || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.thd_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Insulation Resistance</td>
-                        <td class="px-2 py-1 font-mono">${r.ir_m_ohms || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.ir_m_ohms || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.ir_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">High Voltage</td>
-                        <td class="px-2 py-1 font-mono">${r.high_voltage || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.high_voltage || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.hv_result)}</td>
                       </tr>
                     </tbody>
@@ -317,17 +317,17 @@ function renderTable(data) {
                     <tbody class="divide-y divide-gray-100">
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Main R/Y</td>
-                        <td class="px-2 py-1 font-mono">${r.surge_main_ry_error || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.surge_main_ry_error || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.surge_ry_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Aux Y/B</td>
-                        <td class="px-2 py-1 font-mono">${r.surge_aux_yb_error || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.surge_aux_yb_error || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.surge_aux_yb_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Main-Aux B/R</td>
-                        <td class="px-2 py-1 font-mono">${r.surge_main_aux_br_error || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.surge_main_aux_br_error || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.surge_main_aux_br_result)}</td>
                       </tr>
                     </tbody>
@@ -350,17 +350,17 @@ function renderTable(data) {
                     <tbody class="divide-y divide-gray-100">
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Inductance 1</td>
-                        <td class="px-2 py-1 font-mono">${r.inductance_1 || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.inductance_1 || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.l1_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Inductance 2</td>
-                        <td class="px-2 py-1 font-mono">${r.inductance_2 || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.inductance_2 || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.l2_result)}</td>
                       </tr>
                       <tr class="text-gray-800">
                         <td class="px-2 py-1">Inductance 3</td>
-                        <td class="px-2 py-1 font-mono">${r.inductance_3 || '—'}</td>
+                        <td class="px-2 py-1 font-mono">${escapeHtml(r.inductance_3 || '—')}</td>
                         <td class="px-2 py-1 text-right">${getBadge(r.l3_result)}</td>
                       </tr>
                     </tbody>
@@ -369,10 +369,10 @@ function renderTable(data) {
               </div>
 
               <div class="pt-2 flex justify-between items-center">
-                <p class="text-[10px] text-slate-400 font-medium italic uppercase tracking-widest">Record Imported: ${r.imported_at}</p>
-                <button onclick="event.stopPropagation(); deleteRecord(${r.id})" class="text-xs font-bold text-red-500 hover:text-red-700 transition-colors">
-                  Delete Record
-                </button>
+                <p class="text-[10px] text-slate-400 font-medium italic uppercase tracking-widest">Record Imported: ${escapeHtml(r.imported_at)}</p>
+                <span class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <span class="material-symbols-outlined text-sm">lock</span> Immutable
+                </span>
               </div>
             </div>
           </td>
@@ -397,13 +397,6 @@ async function handleExcelUpload(event) {
     showToast(data.detail || 'Import failed', 'error');
   }
   event.target.value = ''; // Reset input
-}
-
-async function deleteRecord(id) {
-  if (await API.deleteBalancingRecord('stator', id)) {
-    showToast('Record deleted successfully', 'success');
-    loadRecords();
-  }
 }
 
 // Initial load

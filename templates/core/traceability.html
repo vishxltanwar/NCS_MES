@@ -122,22 +122,21 @@ return;
 }
 
 tbody.innerHTML = serials.map((s, i) => {
-const sJson = JSON.stringify(s).replace(/&/g, '&amp;').replace(/'/g, '&apos;').replace(/"/g, '&quot;');
+const encodedSerial = encodeURIComponent(s.serial_number || '').replace(/'/g, '%27');
 return `
-<tr class="hover:bg-slate-50 transition-colors cursor-pointer" onclick="searchSerialStr('${s.serial_number}')"
-  data-item="${sJson}">
+<tr class="hover:bg-slate-50 transition-colors cursor-pointer" onclick="searchSerialStr(decodeURIComponent('${encodedSerial}'))">
   <td class="px-6 py-3 text-slate-400 font-medium">${s.id}</td>
-  <td class="px-6 py-3"><span class="font-mono font-bold text-primary">${s.serial_number}</span></td>
-  <td class="px-6 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold">${s.part_number}</span></td>
-  <td class="px-6 py-3 font-medium text-slate-600">${s.line_no}</td>
+  <td class="px-6 py-3"><span class="font-mono font-bold text-primary">${escapeHtml(s.serial_number)}</span></td>
+  <td class="px-6 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold">${escapeHtml(s.part_number)}</span></td>
+  <td class="px-6 py-3 font-medium text-slate-600">${escapeHtml(s.line_no)}</td>
   <td class="px-6 py-3">
-    <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">${s.shift}</span>
+    <span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">${escapeHtml(s.shift)}</span>
   </td>
   <td class="px-6 py-3">
     <span
       class="inline-flex items-center gap-1.5 text-xs font-bold ${s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100'} px-2.5 py-1 rounded-full">
       <span
-        class="h-1.5 w-1.5 rounded-full ${s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500'}"></span>${s.status}
+        class="h-1.5 w-1.5 rounded-full ${s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500'}"></span>${escapeHtml(s.status)}
     </span>
   </td>
   <td class="px-6 py-3 text-right text-xs text-slate-400">
@@ -197,7 +196,7 @@ function showDetail(data, sn) {
     const dotColor = isPass ? 'bg-green-500' : 'bg-red-500';
     return `
       <span class="inline-flex items-center gap-1.5 text-[10px] font-bold ${bColor} px-2 py-0.5 rounded-full">
-        <span class="h-1 w-1 rounded-full ${dotColor}"></span>${val}
+        <span class="h-1 w-1 rounded-full ${dotColor}"></span>${escapeHtml(val)}
       </span>
     `;
   };
@@ -206,8 +205,8 @@ function showDetail(data, sn) {
     if (val === null || val === undefined || val === '' || val === 'nan') val = '—';
     return `
       <div class="flex items-center justify-between py-2.5">
-        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">${label}</span>
-        <div class="text-sm font-bold text-slate-900 font-mono">${isBadge ? getBadge(val) : val}</div>
+        <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">${escapeHtml(label)}</span>
+        <div class="text-sm font-bold text-slate-900 font-mono">${isBadge ? getBadge(val) : escapeHtml(val)}</div>
       </div>
     `;
   };
@@ -216,8 +215,8 @@ function showDetail(data, sn) {
     return `
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center gap-2">
-          <span class="material-symbols-outlined text-lg ${iconColorClass}">${icon}</span>
-          <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">${title}</h4>
+          <span class="material-symbols-outlined text-lg ${iconColorClass}">${escapeHtml(icon)}</span>
+          <h4 class="text-[10px] font-black text-slate-500 uppercase tracking-widest">${escapeHtml(title)}</h4>
         </div>
         <div class="px-5 divide-y divide-slate-100">
           ${content}
@@ -231,14 +230,14 @@ function showDetail(data, sn) {
     const display = (val) => (val === null || val === undefined || val === '' || String(val).toLowerCase() === 'nan') ? 'â€”' : val;
     const rows = attempts.map(a => `
       <tr class="border-b border-slate-100 last:border-0">
-        <td class="px-4 py-3 font-mono font-bold text-slate-900">#${display(a.attempt_no || 1)}</td>
+        <td class="px-4 py-3 font-mono font-bold text-slate-900">#${escapeHtml(display(a.attempt_no || 1))}</td>
         <td class="px-4 py-3">${getBadge(a.result)}</td>
-        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane1_weight)}</td>
-        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane1_degree)}</td>
-        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane2_weight)}</td>
-        <td class="px-4 py-3 font-mono text-slate-700">${display(a.plane2_degree)}</td>
-        <td class="px-4 py-3 font-mono text-slate-700">${display(a.rpm)}</td>
-        <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${display(a.recorded_at || a.imported_at)}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${escapeHtml(display(a.plane1_weight))}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${escapeHtml(display(a.plane1_degree))}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${escapeHtml(display(a.plane2_weight))}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${escapeHtml(display(a.plane2_degree))}</td>
+        <td class="px-4 py-3 font-mono text-slate-700">${escapeHtml(display(a.rpm))}</td>
+        <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${escapeHtml(display(a.recorded_at || a.imported_at))}</td>
       </tr>
     `).join('');
     return `
@@ -275,13 +274,11 @@ function showDetail(data, sn) {
       : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
       : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
       : 'bg-slate-100 text-slate-400';
-    var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
-
     var lmContent = [
       renderField('Part Number', s.part_number),
       renderField('Line No.', s.line_no),
       renderField('Shift', s.shift),
-      renderField('Part Type', ptHtml),
+      renderField('Part Type', ptLabel),
       renderField('Status', s.status, true),
       renderField('Created At', s.created_at !== '—' ? new Date(s.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—'),
       renderField('Record ID', '#' + s.id)

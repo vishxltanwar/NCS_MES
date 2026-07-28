@@ -23,17 +23,6 @@ const API = {
         }
     },
 
-    async deleteSerial(id) {
-        if (!confirm("Are you sure you want to delete this serial record?")) return false;
-        try {
-            const res = await fetch(`/api/serials/${id}`, { method: 'DELETE' });
-            return res.ok;
-        } catch (err) {
-            console.error('Error deleting serial:', err);
-            return false;
-        }
-    },
-
     async markDone(serial) {
         try {
             const res = await fetch('/api/mark-done', {
@@ -58,18 +47,6 @@ const API = {
         } catch (err) {
             console.error(`Error fetching ${type} records:`, err);
             return [];
-        }
-    },
-
-    async deleteBalancingRecord(type, id) {
-        if (!confirm("Are you sure you want to delete this record?")) return false;
-        try {
-            const endpoint = type === 'stator' ? 'stator-testing' : `${type}-balancing`;
-            const res = await fetch(`/api/${endpoint}/${id}/`, { method: 'DELETE' });
-            return res.ok;
-        } catch (err) {
-            console.error(`Error deleting ${type} record:`, err);
-            return false;
         }
     },
 

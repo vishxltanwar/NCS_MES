@@ -180,7 +180,7 @@ function earlierAttemptsFor(record, data) {
 }
 
 function displayValue(value) {
-  return value !== '' && value !== null && value !== undefined ? value : '-';
+  return escapeHtml(value !== '' && value !== null && value !== undefined ? value : '-');
 }
 
 async function loadHistoryForSerial(serial) {
@@ -231,7 +231,7 @@ function renderTable(data) {
     const earlierAttempts = earlierAttemptsFor(r, data);
     const hasHistory = Number(r.attempt_no || 1) > 1 || earlierAttempts.length > 0;
     const key = serialKeyFor(r.serial_number);
-    const encodedSerial = encodeURIComponent(r.serial_number || '');
+    const encodedSerial = encodeURIComponent(r.serial_number || '').replace(/'/g, '%27');
     const isExpanded = expandedSerial === key;
     const historyLoaded = Boolean(rotorHistoryBySerial[key]);
     const historyRows = earlierAttempts.map(a => {
@@ -240,10 +240,10 @@ function renderTable(data) {
       const attemptDot = attemptPass ? 'bg-green-500' : 'bg-red-500';
       return `
         <tr class="border-b border-slate-100 last:border-0">
-          <td class="px-4 py-3 font-mono font-bold text-slate-900">#${a.attempt_no || 1}</td>
+          <td class="px-4 py-3 font-mono font-bold text-slate-900">#${escapeHtml(a.attempt_no || 1)}</td>
           <td class="px-4 py-3">
             <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${attemptColor} px-2.5 py-1 rounded-full">
-              <span class="h-1.5 w-1.5 rounded-full ${attemptDot}"></span>${a.result}
+              <span class="h-1.5 w-1.5 rounded-full ${attemptDot}"></span>${escapeHtml(a.result)}
             </span>
           </td>
           <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.plane1_weight)}</td>
@@ -252,11 +252,7 @@ function renderTable(data) {
           <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.plane2_degree)}</td>
           <td class="px-4 py-3 font-mono text-slate-700">${displayValue(a.rpm)}</td>
           <td class="px-4 py-3 text-slate-500 whitespace-nowrap">${displayValue(a.recorded_at)}</td>
-          <td class="px-4 py-3 text-right">
-            <button onclick="event.stopPropagation(); deleteRecord(${a.id})" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-red-500 hover:bg-red-50 rounded-md transition-colors">
-              <span class="material-symbols-outlined text-sm">delete</span> Delete
-            </button>
-          </td>
+          <td class="px-4 py-3 text-right"><span class="material-symbols-outlined text-sm text-slate-300" title="Immutable traceability record">lock</span></td>
         </tr>
       `;
     }).join('');
@@ -267,15 +263,15 @@ function renderTable(data) {
         <td class="px-5 py-3">
           <span class="font-mono font-medium text-primary text-sm inline-flex items-center gap-2">
             ${hasHistory ? `<span class="material-symbols-outlined text-base text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}">chevron_right</span>` : ''}
-            <span class="hover:underline decoration-1 underline-offset-4">${r.serial_number}</span>
+            <span class="hover:underline decoration-1 underline-offset-4">${escapeHtml(r.serial_number)}</span>
           </span>
         </td>
         <td class="px-5 py-3">
-          <span class="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-xs font-black text-slate-600">#${r.attempt_no || 1}</span>
+          <span class="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-xs font-black text-slate-600">#${escapeHtml(r.attempt_no || 1)}</span>
         </td>
         <td class="px-5 py-3">
           <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${bColor} px-2.5 py-1 rounded-full shadow-sm">
-            <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${r.result}
+            <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${escapeHtml(r.result)}
           </span>
         </td>
         <td class="px-5 py-3 font-mono text-slate-700">${displayValue(r.plane1_weight)}</td>
@@ -287,9 +283,9 @@ function renderTable(data) {
         <td class="px-5 py-3 text-right">
           <div class="flex items-center justify-end gap-3">
             ${hasHistory ? `<span class="text-[10px] font-bold text-slate-400">${Number(r.attempt_no || 1) - 1} earlier</span>` : ''}
-            <button onclick="event.stopPropagation(); deleteRecord(${r.id})" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-red-500 hover:bg-red-50 rounded-md transition-colors">
-              <span class="material-symbols-outlined text-sm">delete</span> Delete
-            </button>
+            <span class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-slate-400">
+              <span class="material-symbols-outlined text-sm">lock</span> Immutable
+            </span>
           </div>
         </td>
       </tr>
@@ -347,13 +343,6 @@ async function handleExcelUpload(event) {
     showToast(data.detail || 'Import failed', 'error');
   }
   event.target.value = ''; // Reset input
-}
-
-async function deleteRecord(id) {
-  if (await API.deleteBalancingRecord('rotor', id)) {
-    showToast('Record deleted successfully', 'success');
-    loadRecords();
-  }
 }
 
 // Initial load

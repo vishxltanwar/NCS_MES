@@ -267,19 +267,19 @@ async function loadDayRecords() {
       var rotClass = s.rotor_result === 'Pass' ? 'text-green-700 bg-green-100' : (s.rotor_result === 'Fail' ? 'text-red-700 bg-red-100' : 'text-slate-400 bg-slate-50');
       var rotDot = s.rotor_result === 'Pass' ? 'bg-green-500' : (s.rotor_result === 'Fail' ? 'bg-red-500' : 'hidden');
       var rotHtml = s.rotor_result ? 
-        '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + rotClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + rotDot + '"></span>' + s.rotor_result + '</span>' 
+        '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + rotClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + rotDot + '"></span>' + escapeHtml(s.rotor_result) + '</span>'
         : '<span class="text-xs text-slate-300 font-bold px-2 py-0.5 bg-slate-50 rounded">N/A</span>';
         
       html += '<tr class="hover:bg-white/60 transition-colors">' +
         '<td class="px-6 py-3 text-xs text-slate-400 font-mono">' + (idx + 1) + '</td>' +
-        '<td class="px-6 py-3"><span class="font-mono font-bold text-primary text-sm">' + s.serial_number + '</span></td>' +
-        '<td class="px-4 py-3"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>' +
-        '<td class="px-4 py-3 font-medium text-slate-600">' + s.line_no + '</td>' +
-        '<td class="px-4 py-3"><span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + s.shift + '</span></td>' +
-        '<td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span></td>' +
-        '<td class="px-4 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status + '</span></td>' +
+        '<td class="px-6 py-3"><span class="font-mono font-bold text-primary text-sm">' + escapeHtml(s.serial_number) + '</span></td>' +
+        '<td class="px-4 py-3"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + escapeHtml(s.part_number) + '</span></td>' +
+        '<td class="px-4 py-3 font-medium text-slate-600">' + escapeHtml(s.line_no) + '</td>' +
+        '<td class="px-4 py-3"><span class="px-2 py-1 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + escapeHtml(s.shift) + '</span></td>' +
+        '<td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + escapeHtml(ptLabel) + '</span></td>' +
+        '<td class="px-4 py-3"><span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusClass + ' px-2.5 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + escapeHtml(s.status) + '</span></td>' +
         '<td class="px-4 py-3">' + rotHtml + '</td>' +
-        '<td class="px-4 py-3 text-right text-slate-500 text-xs font-mono font-medium">' + timeStr + '</td>' +
+        '<td class="px-4 py-3 text-right text-slate-500 text-xs font-mono font-medium">' + escapeHtml(timeStr) + '</td>' +
         '</tr>';
     });
     tbody.innerHTML = html;
@@ -406,7 +406,7 @@ async function loadData() {
           '<div class="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-50/60 border border-slate-100 hover:bg-white hover:shadow-sm transition-all">' +
           '<div class="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-black">' + (i + 1) + '</div>' +
           '<div class="flex-1 min-w-0">' +
-            '<p class="font-mono text-sm font-bold text-slate-900 truncate">' + p.part_number + '</p>' +
+            '<p class="font-mono text-sm font-bold text-slate-900 truncate">' + escapeHtml(p.part_number) + '</p>' +
             '<p class="text-[10px] text-slate-400">' + p.count.toLocaleString('en-IN') + ' parts</p>' +
           '</div>' +
           '<div class="text-right"><span class="text-xs font-bold text-primary font-mono">' + p.percentage + '%</span></div>' +

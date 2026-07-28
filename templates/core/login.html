@@ -248,7 +248,11 @@
       try {
         const res = await fetch('/api/login', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+          },
+          credentials: 'same-origin',
           body: JSON.stringify({ username, password })
         });
         if (res.ok) {
@@ -267,6 +271,15 @@
         btn.disabled = false;
         btn.innerHTML = '<span>Sign in to Terminal</span><span class="material-symbols-outlined text-lg">arrow_forward</span>';
       }
+    }
+
+    function getCookie(name) {
+      const prefix = name + '=';
+      for (const part of document.cookie.split(';')) {
+        const value = part.trim();
+        if (value.startsWith(prefix)) return decodeURIComponent(value.slice(prefix.length));
+      }
+      return '';
     }
 
     document.addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });

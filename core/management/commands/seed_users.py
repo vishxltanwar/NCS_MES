@@ -1,24 +1,33 @@
-# core/management/commands/seed_users.py
-from django.core.management.base import BaseCommand
+import os
+
 from django.contrib.auth.models import User
-from django.contrib.auth.hashers import make_password
+from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = 'Create default user vishal.tanwar with password 12345678'
+    help = 'Create an initial MES administrator from environment-provided credentials'
 
     def handle(self, *args, **options):
-        username = 'vishal.tanwar'
-        if User.objects.filter(username=username).exists():
-            self.stdout.write(self.style.WARNING(f'User "{username}" already exists — skipping.'))
+        username = os.getenv('MES_SEED_USERNAME', '').strip()
+        password = os.getenv('MES_SEED_PASSWORD', '')
+        if not username or not password:
+            self.stderr.write(
+                self.style.ERROR(
+                    'Set MES_SEED_USERNAME and MES_SEED_PASSWORD before running seed_users.'
+                )
+            )
             return
 
-        User.objects.create(
+        if User.objects.filter(username=username).exists():
+            self.stdout.write(self.style.WARNING(f'User "{username}" already exists; skipping.'))
+            return
+
+        user = User.objects.create_user(
             username=username,
-            first_name='Vishal',
-            last_name='Tanwar',
-            password=make_password('12345678'),
+            password=password,
             is_active=True,
             is_staff=True,
         )
-        self.stdout.write(self.style.SUCCESS(f'Created user "{username}" with password 12345678'))
+        user.profile.role = 'admin'
+        user.profile.save(update_fields=['role'])
+        self.stdout.write(self.style.SUCCESS(f'Created MES administrator "{username}".'))

@@ -132,7 +132,7 @@ document.getElementById('table-title').textContent = "Today's Serial Log — " +
 
 const tbody = document.getElementById('shift-tbody');
 if (!filtered.length) {
-tbody.innerHTML = '<tr><td colspan="8" class="px-7 py-8 text-center text-slate-400 text-xs">No records for ' + label + ' today.</td></tr>';
+tbody.innerHTML = '<tr><td colspan="8" class="px-7 py-8 text-center text-slate-400 text-xs">No records for ' + escapeHtml(label) + ' today.</td></tr>';
 return;
 }
 
@@ -143,7 +143,7 @@ tbody.innerHTML = filtered.map(function(s) {
     : ptLabel === 'Stator' ? 'bg-purple-50 text-purple-700'
     : ptLabel === 'Motor' ? 'bg-orange-50 text-orange-700'
     : 'bg-slate-100 text-slate-400';
-  var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + ptLabel + '</span>';
+  var ptHtml = '<span class="px-2 py-0.5 rounded text-xs font-bold ' + ptClass + '">' + escapeHtml(ptLabel) + '</span>';
   var shiftBadge = shiftColors[s.shift] ? shiftColors[s.shift] : 'bg-slate-100 text-slate-600';
   var statusBadgeClass = s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100';
   var dotClass = s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500';
@@ -152,26 +152,26 @@ tbody.innerHTML = filtered.map(function(s) {
   var rotClass = s.rotor_result === 'Pass' ? 'text-green-700 bg-green-100' : (s.rotor_result === 'Fail' ? 'text-red-700 bg-red-100' : 'text-slate-400 bg-slate-50');
   var rotDot = s.rotor_result === 'Pass' ? 'bg-green-500' : (s.rotor_result === 'Fail' ? 'bg-red-500' : 'hidden');
   var rotHtml = s.rotor_result ? 
-    '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + rotClass + ' px-3 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + rotDot + '"></span>' + s.rotor_result + '</span>' 
+    '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + rotClass + ' px-3 py-1 rounded-full"><span class="h-1.5 w-1.5 rounded-full ' + rotDot + '"></span>' + escapeHtml(s.rotor_result) + '</span>'
     : '<span class="text-xs text-slate-300 font-bold px-3 py-1 bg-slate-50 rounded-full">N/A</span>';
   
   return '<tr class="hover:bg-slate-50/80 transition-colors">' +
-    '<td class="px-7 py-4"><span class="font-mono font-bold text-primary">' + s.serial_number + '</span></td>' +
-    '<td class="px-7 py-4"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + s.part_number + '</span></td>' +
-    '<td class="px-7 py-4 text-center text-sm font-semibold text-slate-600">' + s.line_no + '</td>' +
+    '<td class="px-7 py-4"><span class="font-mono font-bold text-primary">' + escapeHtml(s.serial_number) + '</span></td>' +
+    '<td class="px-7 py-4"><span class="px-2 py-1 bg-slate-100 rounded text-xs font-bold">' + escapeHtml(s.part_number) + '</span></td>' +
+    '<td class="px-7 py-4 text-center text-sm font-semibold text-slate-600">' + escapeHtml(s.line_no) + '</td>' +
     '<td class="px-7 py-4 text-center">' +
       '<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black uppercase ' + shiftBadge + '">' +
-        'Shift ' + s.shift +
+        'Shift ' + escapeHtml(s.shift) +
       '</span>' +
     '</td>' +
     '<td class="px-7 py-4 text-center">' + ptHtml + '</td>' +
     '<td class="px-7 py-4 text-center">' +
       '<span class="inline-flex items-center gap-1.5 text-xs font-bold ' + statusBadgeClass + ' px-3 py-1 rounded-full">' +
-        '<span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + s.status +
+        '<span class="h-1.5 w-1.5 rounded-full ' + dotClass + '"></span>' + escapeHtml(s.status) +
       '</span>' +
     '</td>' +
     '<td class="px-7 py-4 text-center">' + rotHtml + '</td>' +
-    '<td class="px-7 py-4 text-right text-xs text-slate-400">' + timeStr + '</td>' +
+    '<td class="px-7 py-4 text-right text-xs text-slate-400">' + escapeHtml(timeStr) + '</td>' +
   '</tr>';
 
 }).join('');

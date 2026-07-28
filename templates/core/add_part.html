@@ -154,42 +154,18 @@ async function loadParts() {
         var ts = (p.created_at && p.created_at !== '—') ? new Date(p.created_at).toLocaleString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' }) : '—';
                        
         return '<tr class="hover:bg-slate-50 transition-colors">' +
-               '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + p.serial_number + '</span></td>' +
-               '<td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-800">' + p.part_number + '</span></td>' +
-               '<td class="px-5 py-3 text-sm text-slate-600 font-medium">' + p.line_no + '</td>' +
-               '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + p.shift + '</span></td>' +
-               '<td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + pnameClass + '">' + p.part_name + '</span></td>' +
-               '<td class="px-5 py-3 text-xs text-slate-500">' + (p.added_by || '—') + '</td>' +
-               '<td class="px-5 py-3 text-xs text-slate-400">' + ts + '</td>' +
-               '<td class="px-5 py-3 text-right">' +
-                 '<button onclick="deletePart(' + p.id + ')" class="text-red-500 hover:text-red-700 transition-colors p-1" title="Delete Part">' +
-                   '<span class="material-symbols-outlined text-xl">delete</span>' +
-                 '</button>' +
-               '</td>' +
+               '<td class="px-5 py-3"><span class="font-mono font-bold text-primary text-sm">' + escapeHtml(p.serial_number) + '</span></td>' +
+               '<td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-800">' + escapeHtml(p.part_number) + '</span></td>' +
+               '<td class="px-5 py-3 text-sm text-slate-600 font-medium">' + escapeHtml(p.line_no) + '</td>' +
+               '<td class="px-5 py-3"><span class="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs font-bold">Shift ' + escapeHtml(p.shift) + '</span></td>' +
+               '<td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-xs font-bold ' + pnameClass + '">' + escapeHtml(p.part_name) + '</span></td>' +
+               '<td class="px-5 py-3 text-xs text-slate-500">' + escapeHtml(p.added_by || '—') + '</td>' +
+               '<td class="px-5 py-3 text-xs text-slate-400">' + escapeHtml(ts) + '</td>' +
+               '<td class="px-5 py-3 text-right"><span class="material-symbols-outlined text-xl text-slate-300" title="Immutable traceability record">lock</span></td>' +
                '</tr>';
     }).join("");
   } catch (e) {
     tbody.innerHTML = '<tr><td colspan="8" class="px-5 py-6 text-center text-red-400 text-xs">Error loading parts</td></tr>';
-  }
-}
-
-async function deletePart(id) {
-  if (!confirm("Are you sure you want to delete this part?")) return;
-  
-  try {
-    var res = await fetch("/api/parts/" + id, {
-      method: "DELETE"
-    });
-    
-    if (res.ok) {
-      showToast("Part deleted", "success");
-      loadParts();
-    } else {
-      var data = await res.json();
-      showToast(data.detail || "Error deleting part", "error");
-    }
-  } catch(e) {
-    showToast("Network error", "error");
   }
 }
 
@@ -221,11 +197,11 @@ document.getElementById('serial-number').addEventListener('input', async functio
         var res = await fetch('/api/part-lookup/?part_no=' + pn);
         if (res.ok) {
           var data = await res.json();
-          display.innerHTML = '<span class="text-slate-900">' + data.part_name + '</span>';
+          display.innerHTML = '<span class="text-slate-900">' + escapeHtml(data.part_name) + '</span>';
           display.className = 'w-full h-10 px-3 bg-emerald-50/50 border border-emerald-200 rounded-lg text-sm font-bold flex items-center transition-colors';
           hiddenInput.value = data.part_name;
         } else {
-          display.innerHTML = '<span class="text-red-500 font-medium"><span class="material-symbols-outlined text-sm align-middle mr-1">warning</span>Not Found (' + pn + ')</span>';
+          display.innerHTML = '<span class="text-red-500 font-medium"><span class="material-symbols-outlined text-sm align-middle mr-1">warning</span>Not Found (' + escapeHtml(pn) + ')</span>';
           display.className = 'w-full h-10 px-3 bg-red-50 border border-red-200 rounded-lg text-sm font-bold flex items-center transition-colors';
           hiddenInput.value = '';
         }
