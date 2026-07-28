@@ -421,19 +421,10 @@ async function loadData() {
 
 async function loadLiveRate() {
   try {
-    var res = await fetch('/api/serials');
+    var res = await fetch('/api/stats');
     if (!res.ok) return;
-    var serials = await res.json();
-    var now = new Date();
-    var oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    var count = 0;
-    for (var i = 0; i < serials.length; i++) {
-      var s = serials[i];
-      if (!s.created_at || s.created_at === '\u2014') continue;
-      var ts = new Date(s.created_at);
-      if (ts >= oneHourAgo && ts <= now) count++;
-    }
-    document.getElementById('kpi-live-rate').textContent = count + ' parts/hr';
+    var stats = await res.json();
+    document.getElementById('kpi-live-rate').textContent = stats.live_rate + ' parts/hr';
   } catch(e) {
     console.error('Live rate error:', e);
   }

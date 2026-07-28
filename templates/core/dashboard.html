@@ -266,43 +266,23 @@ function getShiftProgress(shift, now) {
 }
 
 async function loadShiftProgress() {
-  var now = new Date();
-  var shift = detectShift(now);
-  var prog = getShiftProgress(shift, now);
-
-  document.getElementById('shift-title').textContent = 'Shift ' + shift.id + ' \u2014 ' + shift.name;
-  document.getElementById('shift-time-range').textContent = pad2(shift.start[0]) + ':' + pad2(shift.start[1]) + ' \u2013 ' + pad2(shift.end[0]) + ':' + pad2(shift.end[1]);
-  document.getElementById('shift-pct').textContent = prog.pct + '%';
-  document.getElementById('shift-bar').style.width = prog.pct + '%';
-  document.getElementById('shift-remaining').textContent = prog.remainH + 'h ' + pad2(prog.remainM) + 'm remaining';
-
   try {
-    var res = await fetch('/api/serials');
+    var res = await fetch('/api/stats');
     if (!res.ok) return;
-    var serials = await res.json();
-
-    var shiftStart = new Date(now);
-    shiftStart.setHours(shift.start[0], shift.start[1], 0, 0);
-    var shiftEnd = new Date(now);
-    shiftEnd.setHours(shift.end[0], shift.end[1], 0, 0);
-
-    if (shift.end[0] < shift.start[0] || (shift.end[0] === shift.start[0] && shift.end[1] <= shift.start[1])) {
-      if (now.getHours() < shift.end[0] || (now.getHours() === shift.end[0] && now.getMinutes() < shift.end[1])) {
-        shiftStart.setDate(shiftStart.getDate() - 1);
-      } else {
-        shiftEnd.setDate(shiftEnd.getDate() + 1);
-      }
-    }
-
-    var count = 0;
-    for (var i = 0; i < serials.length; i++) {
-      var s = serials[i];
-      if (!s.created_at || s.created_at === '\u2014') continue;
-      var ts = new Date(s.created_at);
-      if (ts >= shiftStart && ts < shiftEnd) count++;
-    }
-    document.getElementById('shift-parts-count').textContent = count;
-    document.getElementById('shift-parts-bar').style.width = Math.min(100, Math.round((count / 999) * 100)) + '%';
+    var stats = await res.json();
+    var shift = stats.current_shift;
+    var remaining = Number(shift.remaining_minutes || 0);
+    document.getElementById('shift-title').textContent = 'Shift ' + shift.id + ' \u2014 ' + shift.name;
+    document.getElementById('shift-time-range').textContent =
+      new Date(shift.start).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }) +
+      ' \u2013 ' +
+      new Date(shift.end).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+    document.getElementById('shift-pct').textContent = shift.progress_pct + '%';
+    document.getElementById('shift-bar').style.width = shift.progress_pct + '%';
+    document.getElementById('shift-remaining').textContent =
+      Math.floor(remaining / 60) + 'h ' + pad2(remaining % 60) + 'm remaining';
+    document.getElementById('shift-parts-count').textContent = shift.count;
+    document.getElementById('shift-parts-bar').style.width = Math.min(100, Math.round((shift.count / 999) * 100)) + '%';
   } catch(e) {
     console.error('Shift parts error:', e);
   }

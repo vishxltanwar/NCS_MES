@@ -156,6 +156,10 @@ class RotorBalancing(models.Model):
                 models.F('attempt_no'),
                 name='rotor_serial_attempt_ci_unique',
             ),
+            models.CheckConstraint(
+                condition=models.Q(attempt_no__gt=0),
+                name='rotor_attempt_number_positive',
+            ),
         ]
 
     def save(self, *args, **kwargs):
@@ -271,6 +275,10 @@ class MagnetInsertion(models.Model):
                 Lower('stack_serial'),
                 Lower('magnet_serial'),
                 name='magnet_stack_pair_ci_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(cycle_time__gt=0, cycle_time__lte=3600),
+                name='magnet_cycle_time_valid',
             ),
         ]
 

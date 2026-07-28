@@ -178,10 +178,11 @@ tbody.innerHTML = filtered.map(function(s) {
 }
 
 async function loadReport() {
-const res = await fetch('/api/serials');
-const all = await res.json();
-const today = new Date().toISOString().slice(0, 10);
-allTodaySerials = all.filter(s => s.created_at && s.created_at.startsWith(today));
+try {
+const res = await fetch('/api/production-log/day');
+if (!res.ok) throw new Error('Unable to load shift report');
+const data = await res.json();
+allTodaySerials = Array.isArray(data.records) ? data.records : [];
 
 const shiftCount = { A: 0, B: 0, C: 0, G: 0 };
 allTodaySerials.forEach(s => { if (shiftCount[s.shift] !== undefined) shiftCount[s.shift]++; });
@@ -194,6 +195,10 @@ document.getElementById('sr-g').textContent = shiftCount.G;
 
 highlightKpi();
 renderTable();
+} catch (error) {
+console.error('Shift report error:', error);
+showToast('Unable to load today\u2019s shift report', 'error');
+}
 }
 
 loadReport();

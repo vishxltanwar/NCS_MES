@@ -27,6 +27,7 @@ from django.utils import timezone as django_tz
 from pymodbus.client import ModbusTcpClient
 import struct
 from django.db import DatabaseError, IntegrityError, models, transaction
+from django.db.models.functions import Lower, RowNumber
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -146,6 +147,19 @@ def _validate_import_dimensions(row_count: int, column_count: int) -> None:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ── Page View Helpers ─────────────────────────────────────────────────────────
+
+def _request_text(data, field, *, label=None, max_length=None, strip=True, upper=False):
+    """Validate text input without coercing structured JSON values."""
+    value = data.get(field, '')
+    display_name = label or field.replace('_', ' ').capitalize()
+    if not isinstance(value, str):
+        raise ValueError(f'{display_name} must be text')
+    if strip:
+        value = value.strip()
+    if max_length is not None and len(value) > max_length:
+        raise ValueError(f'{display_name} must be no more than {max_length} characters')
+    return value.upper() if upper else value
+
 
 def _render_page(request, template_name, active_page):
     get_token(request)
@@ -293,8 +307,11 @@ def _record_login_failure(keys):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def api_login(request):
-    username = request.data.get('username', '').strip()
-    password = request.data.get('password', '')
+    try:
+        username = _request_text(request.data, 'username', max_length=150)
+        password = _request_text(request.data, 'password', max_length=4096, strip=False)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
     rate_keys = _login_rate_keys(request, username)
     if _login_rate_status(rate_keys):
         response = Response(
@@ -334,23 +351,26 @@ def api_logout(request):
 @api_view(['POST'])
 @api_access_required('laser_write')
 def api_generate(request):
-    part_number = request.data.get('part_number', '')
-    line_no = request.data.get('line_no', '')
-    shift_val = request.data.get('shift', '')
-    part_type = request.data.get('part_type', '')
+    try:
+        part_number = _request_text(request.data, 'part_number', label='Part number', max_length=5)
+        line_no = _request_text(request.data, 'line_no', label='Line number', max_length=2)
+        shift_val = _request_text(request.data, 'shift', max_length=1, upper=True)
+        part_type = _request_text(request.data, 'part_type', label='Part type', max_length=20)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
 
     if not part_number.isdigit() or len(part_number) != 5:
         return Response({'detail': 'Part number must be exactly 5 digits'}, status=400)
     if not line_no.isdigit() or len(line_no) != 2:
         return Response({'detail': 'Line number must be 2 digits (e.g. 01)'}, status=400)
-    if shift_val.upper() not in ('A', 'B', 'C', 'G'):
+    if shift_val not in ('A', 'B', 'C', 'G'):
         return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
 
     try:
         entry = create_serial_record(
             part_number,
             line_no,
-            shift_val.upper(),
+            shift_val,
             part_type or '',
         )
     except ValueError as exc:
@@ -381,7 +401,16 @@ def api_generate(request):
 @api_view(['GET'])
 @api_access_required('serials_read')
 def api_serials(request):
-    serials = Serial.objects.all().order_by('-created_at')[:100]
+    latest_rotor_result = RotorBalancing.objects.filter(
+        serial_number__iexact=models.OuterRef('serial_number')
+    ).order_by(
+        '-attempt_no',
+        '-recorded_at',
+        '-imported_at',
+    ).values('result')[:1]
+    serials = Serial.objects.annotate(
+        latest_rotor_result=models.Subquery(latest_rotor_result)
+    ).order_by('-created_at')[:100]
     data = []
     serial_numbers_seen = set()
     
@@ -397,11 +426,27 @@ def api_serials(request):
             'created_at': s.created_at.astimezone(IST).isoformat() if s.created_at else '—',
             'status': s.status,
             'laser_delivery_status': s.laser_delivery_status,
-            'rotor_result': getattr(_latest_rotor_balancing(s.serial_number.strip()), 'result', None)
+            'rotor_result': s.latest_rotor_result,
         })
         
     # Append isolated Rotor Balancing records
-    isolated_rotors = RotorBalancing.objects.exclude(serial_number__in=serial_numbers_seen).order_by('-imported_at')[:50]
+    serial_keys_seen = {serial.lower() for serial in serial_numbers_seen}
+    isolated_rotors = RotorBalancing.objects.annotate(
+        serial_key=Lower('serial_number'),
+        serial_rank=models.Window(
+            expression=RowNumber(),
+            partition_by=[Lower('serial_number')],
+            order_by=[
+                models.F('attempt_no').desc(),
+                models.F('recorded_at').desc(nulls_last=True),
+                models.F('imported_at').desc(),
+            ],
+        ),
+    ).exclude(
+        serial_key__in=serial_keys_seen
+    ).filter(
+        serial_rank=1
+    ).order_by('-imported_at')[:50]
     for r in isolated_rotors:
         data.append({
             'id': f'rbm-{r.id}',
@@ -461,21 +506,69 @@ def api_retry_serial_delivery(request, serial_id):
 @api_view(['POST'])
 @api_access_required('mark_done')
 def api_mark_done(request):
-    serial = request.data.get('serial', '')
     try:
-        entry = Serial.objects.get(serial_number=serial)
+        serial = _request_text(request.data, 'serial', max_length=32, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    if not serial:
+        return Response({'detail': 'Serial is required'}, status=400)
+    try:
+        entry = Serial.objects.get(serial_number__iexact=serial)
     except Serial.DoesNotExist:
         return Response({'detail': 'Serial not found'}, status=404)
 
     entry.status = 'Marked'
-    entry.save()
-    return Response({'serial': serial, 'status': 'Marked'})
+    entry.save(update_fields=['status'])
+    return Response({'serial': entry.serial_number, 'status': 'Marked'})
+
+
+def _current_shift_metrics(now):
+    plant_timezone = django_tz.get_current_timezone()
+    local_now = django_tz.localtime(now, plant_timezone)
+    shift_specs = (
+        ('G', 'General', dt.time(8, 30), dt.time(17, 0)),
+        ('A', 'Morning', dt.time(6, 30), dt.time(15, 0)),
+        ('B', 'Afternoon', dt.time(15, 0), dt.time(23, 30)),
+        ('C', 'Night', dt.time(23, 30), dt.time(6, 30)),
+    )
+    for shift_id, name, start_time, end_time in shift_specs:
+        if start_time < end_time:
+            active = start_time <= local_now.time() < end_time
+        else:
+            active = local_now.time() >= start_time or local_now.time() < end_time
+        if not active:
+            continue
+
+        start_day = local_now.date()
+        end_day = local_now.date()
+        if start_time >= end_time:
+            if local_now.time() < end_time:
+                start_day -= timedelta(days=1)
+            else:
+                end_day += timedelta(days=1)
+        start_at = django_tz.make_aware(datetime.combine(start_day, start_time), plant_timezone)
+        end_at = django_tz.make_aware(datetime.combine(end_day, end_time), plant_timezone)
+        total_seconds = (end_at - start_at).total_seconds()
+        elapsed_seconds = max(0, min(total_seconds, (local_now - start_at).total_seconds()))
+        remaining_minutes = max(0, int((total_seconds - elapsed_seconds + 59) // 60))
+        return {
+            'id': shift_id,
+            'name': name,
+            'start_at': start_at,
+            'end_at': end_at,
+            'progress_pct': round((elapsed_seconds / total_seconds) * 100),
+            'remaining_minutes': remaining_minutes,
+        }
+
+    raise RuntimeError('Shift schedule does not cover the current time')
 
 
 @api_view(['GET'])
 @api_access_required('stats')
 def api_stats(request):
-    today = django_tz.localdate()
+    now = django_tz.now()
+    current_shift = _current_shift_metrics(now)
+    today = django_tz.localtime(now).date()
     total_today = Serial.objects.filter(created_at__date=today).count()
     marked_today = Serial.objects.filter(created_at__date=today, status='Marked').count()
     pending_today = Serial.objects.filter(created_at__date=today, status='Pending').count()
@@ -495,6 +588,14 @@ def api_stats(request):
     magnet_total = magnet_today_objs.count()
     magnet_pass = magnet_today_objs.filter(pass_fail=True).count()
     magnet_fail = magnet_today_objs.filter(pass_fail=False).count()
+    live_rate = Serial.objects.filter(
+        created_at__gt=now - timedelta(hours=1),
+        created_at__lte=now,
+    ).count()
+    current_shift_count = Serial.objects.filter(
+        created_at__gte=current_shift['start_at'],
+        created_at__lt=current_shift['end_at'],
+    ).count()
     
     return Response({
         'total_today': total_today,
@@ -510,6 +611,16 @@ def api_stats(request):
         'magnet_total': magnet_total,
         'magnet_pass': magnet_pass,
         'magnet_fail': magnet_fail,
+        'live_rate': live_rate,
+        'current_shift': {
+            'id': current_shift['id'],
+            'name': current_shift['name'],
+            'start': current_shift['start_at'].isoformat(),
+            'end': current_shift['end_at'].isoformat(),
+            'progress_pct': current_shift['progress_pct'],
+            'remaining_minutes': current_shift['remaining_minutes'],
+            'count': current_shift_count,
+        },
     })
 
 
@@ -980,11 +1091,14 @@ def api_check_serial(request):
 @api_view(['POST'])
 @api_access_required('add_part_write')
 def api_add_part(request):
-    serial_number = request.data.get('serial_number', '').strip().upper()
-    part_number = request.data.get('part_number', '')
-    part_name = request.data.get('part_name', '')
-    line_no = request.data.get('line_no', '')
-    shift_val = request.data.get('shift', '')
+    try:
+        serial_number = _request_text(request.data, 'serial_number', label='Serial number', max_length=32, upper=True)
+        part_number = _request_text(request.data, 'part_number', label='Part number', max_length=5)
+        part_name = _request_text(request.data, 'part_name', label='Part name', max_length=50)
+        line_no = _request_text(request.data, 'line_no', label='Line number', max_length=2)
+        shift_val = _request_text(request.data, 'shift', max_length=1, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
 
     if not part_number.isdigit() or len(part_number) != 5:
         return Response({'detail': 'Part number must be exactly 5 digits'}, status=400)
@@ -992,14 +1106,14 @@ def api_add_part(request):
         return Response({'detail': 'Part name is required'}, status=400)
     if not line_no.isdigit() or len(line_no) != 2:
         return Response({'detail': 'Line number must be 2 digits (e.g. 01)'}, status=400)
-    if shift_val.upper() not in ('A', 'B', 'C', 'G'):
+    if shift_val not in ('A', 'B', 'C', 'G'):
         return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
 
     if Part.objects.filter(serial_number__iexact=serial_number).exists():
         return Response({'detail': 'Serial number already exists.'}, status=400)
 
     user = request.user
-    full_name = user.get_full_name() or user.username if user.is_authenticated else ''
+    full_name = (user.get_full_name() or user.username if user.is_authenticated else '')[:100]
 
     try:
         new_part = Part.objects.create(
@@ -1007,7 +1121,7 @@ def api_add_part(request):
             part_number=part_number,
             part_name=part_name,
             line_no=line_no,
-            shift=shift_val.upper(),
+            shift=shift_val,
             added_by=full_name,
         )
         return Response({
@@ -1065,13 +1179,21 @@ def api_delete_part(request, part_id):
 @api_access_required('production_log_read')
 def api_production_log(request):
     """Return 7-day aggregated production data."""
-    part_type = request.query_params.get('part_type', '')
+    part_type = request.query_params.get('part_type', '').strip()
+    line_no = request.query_params.get('line_no', '').strip()
+    if line_no and (not line_no.isdigit() or len(line_no) != 2):
+        return Response({'detail': 'line_no must be exactly 2 digits'}, status=400)
     today = django_tz.localdate()
     start_date = today - timedelta(days=6)
 
-    qs = Serial.objects.filter(created_at__date__gte=start_date)
+    qs = Serial.objects.filter(
+        created_at__date__gte=start_date,
+        created_at__date__lte=today,
+    )
     if part_type:
-        qs = qs.filter(part_type=part_type)
+        qs = qs.filter(part_type__iexact=part_type)
+    if line_no:
+        qs = qs.filter(line_no=line_no)
     serials = list(qs)
 
     # Build daily + shift matrix
@@ -1149,12 +1271,24 @@ def api_production_log(request):
 @api_access_required('production_log_read')
 def api_production_log_day(request):
     """Return individual serial records for a specific date."""
-    day = request.query_params.get('day', '')
-    part_type = request.query_params.get('part_type', '')
+    day_value = request.query_params.get('day', '').strip()
+    part_type = request.query_params.get('part_type', '').strip()
+    line_no = request.query_params.get('line_no', '').strip()
+    if day_value:
+        try:
+            day = date.fromisoformat(day_value)
+        except (TypeError, ValueError):
+            return Response({'detail': 'day must be a valid date in YYYY-MM-DD format'}, status=400)
+    else:
+        day = django_tz.localdate()
+    if line_no and (not line_no.isdigit() or len(line_no) != 2):
+        return Response({'detail': 'line_no must be exactly 2 digits'}, status=400)
 
     qs = Serial.objects.filter(created_at__date=day)
     if part_type:
-        qs = qs.filter(part_type=part_type)
+        qs = qs.filter(part_type__iexact=part_type)
+    if line_no:
+        qs = qs.filter(line_no=line_no)
     serials = qs.order_by('-created_at')
 
     records = []
@@ -1178,7 +1312,7 @@ def api_production_log_day(request):
         })
 
     return Response({
-        'date': day,
+        'date': day.isoformat(),
         'total': len(records),
         'marked': marked,
         'pending': len(records) - marked,
@@ -1246,6 +1380,7 @@ def _parse_rotor_recorded_at(date_val, time_val):
 
 @api_view(['POST'])
 @api_access_required('rotor_write')
+@transaction.atomic
 def api_rotor_balancing_import(request):
     file_obj = request.FILES.get('file')
     if not file_obj:
@@ -1253,14 +1388,23 @@ def api_rotor_balancing_import(request):
 
     try:
         _validate_import_upload(file_obj)
-        wb = openpyxl.load_workbook(file_obj, data_only=True, read_only=True)
-        sheet = wb.active
-        _validate_import_dimensions(sheet.max_row, sheet.max_column)
-        
-        # Read header to find column indices
-        headers = []
-        for cell in sheet[1]:
-            headers.append(str(cell.value).strip() if cell.value else '')
+        suffix = Path(file_obj.name or '').suffix.lower()
+        if suffix == '.xls':
+            file_obj.seek(0)
+            dataframe = pd.read_excel(file_obj, engine='xlrd')
+            _validate_import_dimensions(len(dataframe.index) + 1, len(dataframe.columns))
+            headers = [str(value).strip() if value is not None else '' for value in dataframe.columns]
+            data_rows = dataframe.itertuples(index=False, name=None)
+        else:
+            file_obj.seek(0)
+            workbook = openpyxl.load_workbook(file_obj, data_only=True, read_only=True)
+            sheet = workbook.active
+            _validate_import_dimensions(sheet.max_row, sheet.max_column)
+            headers = [
+                str(cell.value).strip() if cell.value is not None else ''
+                for cell in sheet[1]
+            ]
+            data_rows = sheet.iter_rows(min_row=2, values_only=True)
             
         try:
             req_cols = ['dd-mm-yy', 'hh:mm:ss', 'Rotor-Type', 'Rotor-Ident', 'Mea-Run', 'Bal-Run', 'RpM', 'PL1[G_MM]', 'PL1[DEG]', 'PL2[G_MM]', 'PL2[DEG]', 'InTol']
@@ -1277,24 +1421,42 @@ def api_rotor_balancing_import(request):
         file_attempt_counts = {}
         
         def safe_int(val):
-            try: return int(float(val)) if val is not None else None
-            except: return None
+            if val is None or (not isinstance(val, str) and pd.isna(val)):
+                return None
+            try:
+                parsed = float(val)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(parsed):
+                raise ValueError('Rotor workbook contains a non-finite integer measurement.')
+            return int(parsed)
             
         def safe_float(val):
-            try: return float(val) if val is not None else None
-            except: return None
+            if val is None or (not isinstance(val, str) and pd.isna(val)):
+                return None
+            try:
+                parsed = float(val)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(parsed):
+                raise ValueError('Rotor workbook contains a non-finite measurement.')
+            return parsed
 
-        for row in sheet.iter_rows(min_row=2, values_only=True):
+        for row in data_rows:
             if not row: continue
             sn_val = row[col_indices['Rotor-Ident']]
             if not sn_val: continue
                 
             serial_num = str(sn_val).strip()
+            if len(serial_num) > 32:
+                raise ValueError('Rotor serial numbers must be no more than 32 characters.')
             serial_key = serial_num.lower()
             file_attempt_counts[serial_key] = file_attempt_counts.get(serial_key, 0) + 1
             incoming_attempt_no = file_attempt_counts[serial_key]
             result_val = str(row[col_indices['InTol']]).strip().upper()
             rotor_type_val = str(row[col_indices['Rotor-Type']] or '').strip()
+            if len(rotor_type_val) > 100:
+                raise ValueError('Rotor type must be no more than 100 characters.')
             
             date_val = row[date_col_index]
             time_val = row[time_col_index]
@@ -1338,8 +1500,10 @@ def api_rotor_balancing_import(request):
         return Response({'detail': f'{imported} rotor balancing attempts imported, {updated} existing attempts updated.'})
 
     except ValueError as exc:
+        transaction.set_rollback(True)
         return Response({'detail': str(exc)}, status=400)
     except Exception:
+        transaction.set_rollback(True)
         logger.exception('Error importing rotor balancing records')
         return Response({'detail': 'Could not parse the uploaded workbook.'}, status=400)
 
@@ -1390,6 +1554,7 @@ def api_rotor_balancing_delete(request, pk):
 
 @api_view(['POST'])
 @api_access_required('stator_write')
+@transaction.atomic
 def api_stator_testing_import(request):
     file_obj = request.FILES.get('file')
     if not file_obj:
@@ -1400,27 +1565,28 @@ def api_stator_testing_import(request):
     except ValueError as exc:
         return Response({'detail': str(exc)}, status=400)
 
+    suffix = Path(file_obj.name or '').suffix.lower()
     try:
-        # 1. Try reading as TSV (handles cases where .xls is actually TSV)
         file_obj.seek(0)
-        df = pd.read_csv(file_obj, sep='\t')
-        # If it's a binary file, read_csv might return a single column of garbage.
-        # We check column count to ensure it's a valid TSV.
-        if len(df.columns) <= 1:
-            raise Exception("Not a valid TSV")
-    except Exception:
-        try:
-            # 2. Fallback to Excel (xlrd engine for .xls as requested)
-            file_obj.seek(0)
-            df = pd.read_excel(file_obj, engine='xlrd')
-        except Exception:
+        if suffix == '.csv':
+            df = pd.read_csv(file_obj)
+        elif suffix == '.tsv':
+            df = pd.read_csv(file_obj, sep='\t')
+        elif suffix == '.xls':
             try:
-                # Final attempt for .xlsx or other Excel formats
-                file_obj.seek(0)
-                df = pd.read_excel(file_obj)
+                df = pd.read_excel(file_obj, engine='xlrd')
             except Exception:
-                # 3. Both failed
-                return Response({'detail': "Could not parse file. Please upload a valid TSV or Excel file."}, status=400)
+                # Some machine exports use a .xls name for tab-separated text.
+                file_obj.seek(0)
+                df = pd.read_csv(file_obj, sep='\t')
+        else:
+            df = pd.read_excel(file_obj, engine='openpyxl')
+    except Exception:
+        logger.exception('Could not parse stator testing upload')
+        return Response(
+            {'detail': 'Could not parse file. Please upload a valid TSV, CSV, XLS, or XLSX file.'},
+            status=400,
+        )
 
     try:
         _validate_import_dimensions(len(df.index), len(df.columns))
@@ -1516,6 +1682,8 @@ def api_stator_testing_import(request):
             sn_val = (get_val(row, 'BAR CODE') or '').upper()
             if not sn_val or sn_val.lower() == 'nan': 
                 continue
+            if len(sn_val) > 32:
+                raise ValueError('Stator serial numbers must be no more than 32 characters.')
                 
             if StatorTestingRecord.objects.filter(serial_number__iexact=sn_val).exists():
                 skipped += 1
@@ -1541,46 +1709,60 @@ def api_stator_testing_import(request):
             res_val = get_val(row, 'FINAL RESULT') or 'N/A'
             if len(res_val) > 20: res_val = res_val[:20]
 
-            StatorTestingRecord.objects.create(
-                serial_number=sn_val,
-                recorded_at=recorded_at,
-                final_result=res_val,
-                operator=get_val(row, 'OPERATOR'),
-                code_number=get_val(row, 'CODE NUMBER'),
-                symmetry=get_val(row, '%SYMMETRY'),
-                ry=get_val(row, 'R/Y'),
-                ry_result=get_val(row, 'R/Y RESULT'),
-                yb=get_val(row, 'Y/B'),
-                yb_result=get_val(row, 'Y/B RESULT'),
-                br=get_val(row, 'B/R'),
-                br_result=get_val(row, 'B/R RESULT'),
-                thd_win=get_val(row, 'THD WIN'),
-                thd_result=get_val(row, 'THD RESULT'),
-                ir_m_ohms=get_val(row, 'IR (M OHMS)'),
-                ir_result=get_val(row, 'IR RESULT'),
-                high_voltage=get_val(row, 'HIGH VOLTAGE'),
-                hv_result=get_val(row, 'HIGH VOLTAGE RESULT'),
-                surge_voltage=get_val(row, 'SURGE VOLTAGE'),
-                surge_main_ry_error=get_val(row, 'SURGE MAIN (R/Y) - ERROR%'),
-                surge_ry_result=get_val(row, 'SURGE R/Y RESULT'),
-                surge_aux_yb_error=get_val(row, 'SURGE AUX (Y/B) - ERROR%'),
-                surge_aux_yb_result=get_val(row, 'SURGE AUX (Y/B) RESULT'),
-                surge_main_aux_br_error=get_val(row, 'SURGE MAIN-AUX (B/R) - ERROR%'),
-                surge_main_aux_br_result=get_val(row, 'SURGE MAIN-AUX (B/R) RESULT'),
-                inductance_1=get_val(row, 'INDUCTANCE-1'),
-                l1_result=get_val(row, 'INDUCTANCE-1 RESULT'),
-                inductance_2=get_val(row, 'INDUCTANCE-2'),
-                l2_result=get_val(row, 'INDUCTANCE-2 RESULT'),
-                inductance_3=get_val(row, 'INDUCTANCE-3'),
-                l3_result=get_val(row, 'INDUCTANCE-3 RESULT')
-            )
+            record_data = {
+                'serial_number': sn_val,
+                'recorded_at': recorded_at,
+                'final_result': res_val,
+                'operator': get_val(row, 'OPERATOR'),
+                'code_number': get_val(row, 'CODE NUMBER'),
+                'symmetry': get_val(row, '%SYMMETRY'),
+                'ry': get_val(row, 'R/Y'),
+                'ry_result': get_val(row, 'R/Y RESULT'),
+                'yb': get_val(row, 'Y/B'),
+                'yb_result': get_val(row, 'Y/B RESULT'),
+                'br': get_val(row, 'B/R'),
+                'br_result': get_val(row, 'B/R RESULT'),
+                'thd_win': get_val(row, 'THD WIN'),
+                'thd_result': get_val(row, 'THD RESULT'),
+                'ir_m_ohms': get_val(row, 'IR (M OHMS)'),
+                'ir_result': get_val(row, 'IR RESULT'),
+                'high_voltage': get_val(row, 'HIGH VOLTAGE'),
+                'hv_result': get_val(row, 'HIGH VOLTAGE RESULT'),
+                'surge_voltage': get_val(row, 'SURGE VOLTAGE'),
+                'surge_main_ry_error': get_val(row, 'SURGE MAIN (R/Y) - ERROR%'),
+                'surge_ry_result': get_val(row, 'SURGE R/Y RESULT'),
+                'surge_aux_yb_error': get_val(row, 'SURGE AUX (Y/B) - ERROR%'),
+                'surge_aux_yb_result': get_val(row, 'SURGE AUX (Y/B) RESULT'),
+                'surge_main_aux_br_error': get_val(row, 'SURGE MAIN-AUX (B/R) - ERROR%'),
+                'surge_main_aux_br_result': get_val(row, 'SURGE MAIN-AUX (B/R) RESULT'),
+                'inductance_1': get_val(row, 'INDUCTANCE-1'),
+                'l1_result': get_val(row, 'INDUCTANCE-1 RESULT'),
+                'inductance_2': get_val(row, 'INDUCTANCE-2'),
+                'l2_result': get_val(row, 'INDUCTANCE-2 RESULT'),
+                'inductance_3': get_val(row, 'INDUCTANCE-3'),
+                'l3_result': get_val(row, 'INDUCTANCE-3 RESULT'),
+            }
+            for field_name, value in record_data.items():
+                model_field = StatorTestingRecord._meta.get_field(field_name)
+                if (
+                    value is not None
+                    and model_field.max_length is not None
+                    and len(str(value)) > model_field.max_length
+                ):
+                    raise ValueError(
+                        f'{model_field.verbose_name.title()} exceeds '
+                        f'{model_field.max_length} characters.'
+                    )
+            StatorTestingRecord.objects.create(**record_data)
             imported += 1
 
         return Response({'detail': f'{imported} records imported, {skipped} skipped (already existed).'})
 
     except ValueError as exc:
+        transaction.set_rollback(True)
         return Response({'detail': str(exc)}, status=400)
     except Exception:
+        transaction.set_rollback(True)
         logger.exception('Error importing stator testing records')
         return Response({'detail': 'Could not import the uploaded file.'}, status=400)
 
@@ -1725,9 +1907,12 @@ def api_motor_assembly(request):
             )
         return Response([_motor_assembly_payload(r) for r in records[:200]])
 
-    motor_serial = request.data.get('motor_serial', '').strip().upper()
-    rotor_serial = request.data.get('rotor_serial', '').strip().upper()
-    stator_serial = request.data.get('stator_serial', '').strip().upper()
+    try:
+        motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
+        rotor_serial = _request_text(request.data, 'rotor_serial', label='Rotor Sr No', max_length=32, upper=True)
+        stator_serial = _request_text(request.data, 'stator_serial', label='Stator Sr No', max_length=32, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
 
     if not motor_serial:
         return Response({'detail': 'Motor Sr No is required'}, status=400)
@@ -1829,11 +2014,14 @@ def api_magnet_insertion_list(request):
 @api_view(['POST'])
 @api_access_required('magnet_write')
 def api_magnet_insertion_create(request):
-    stack_serial = request.data.get('stack_serial', '').strip().upper()
-    magnet_serial = request.data.get('magnet_serial', '').strip().upper()
+    try:
+        stack_serial = _request_text(request.data, 'stack_serial', label='Stack serial', max_length=64, upper=True)
+        magnet_serial = _request_text(request.data, 'magnet_serial', label='Magnet serial', max_length=64, upper=True)
+        shift = _request_text(request.data, 'shift', max_length=1, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
     cycle_time = request.data.get('cycle_time')
     pass_fail = request.data.get('pass_fail')
-    shift = request.data.get('shift', '').strip().upper()
 
     if not stack_serial:
         return Response({'detail': 'Stack serial is required'}, status=400)

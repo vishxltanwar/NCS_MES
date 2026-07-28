@@ -2,9 +2,11 @@ import base64
 import gzip
 import json
 from datetime import datetime, time
-from io import StringIO
+from io import BytesIO, StringIO
 from unittest.mock import patch
 
+import openpyxl
+from django.contrib import admin
 from django.contrib.auth.models import User
 from django.db import IntegrityError, connection, transaction
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -16,6 +18,7 @@ from rest_framework.test import APIClient
 from core.models import (
     DailySerialCounter,
     MagnetInsertion,
+    MotorAssembly,
     Part,
     RotorBalancing,
     Serial,
@@ -209,6 +212,27 @@ class ImportAndSeederHardeningTests(HardeningTestMixin, TestCase):
             (2026, 7, 28, 10, 30),
         )
 
+    def test_stator_import_reads_comma_separated_csv(self):
+        user = self.make_user('operator', 'stator_testing')
+        client = APIClient()
+        client.force_authenticate(user=user)
+        upload = SimpleUploadedFile(
+            'records.csv',
+            (
+                'BAR CODE,DATE,FINAL RESULT\n'
+                'STATOR-CSV-1,28/07/2026 10:30:00,Pass'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = client.post('/api/stator-testing/import/', {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            StatorTestingRecord.objects.get(serial_number='STATOR-CSV-1').final_result,
+            'Pass',
+        )
+
     def test_stator_import_reads_real_legacy_xls_workbook(self):
         # Compressed BIFF8 workbook containing BAR CODE, DATE, and FINAL RESULT.
         workbook = gzip.decompress(base64.b64decode(
@@ -228,6 +252,97 @@ class ImportAndSeederHardeningTests(HardeningTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         record = StatorTestingRecord.objects.get(serial_number='STATOR-XLS-1')
         self.assertEqual(record.final_result, 'Pass')
+
+    def test_rotor_import_reads_real_legacy_xls_workbook(self):
+        workbook = gzip.decompress(base64.b64decode(
+            'H4sIACxtaGoC/+1YTUhUURQ+98178+c4zpgGGogIWZkvZkYoGdAxyQbBURuF7MdsbB4Yzo+M02LaZJnLIGhVtBHctLHaVGJB7VoESi2CIFBbtgoKWqivc8/7YSwXDpRUvO9xzzvfufe+e9695/68t7zkX5l9XLsKP6EdbLCpusBeZGOYXAbxAearKleNuxOTauGfgsuJA2mXYLH8jYOPIR/vVRDgkfgKJcAapvMwAb3ZjFK/i+gkHxKM+9CGksF9tHihhryqJHmJ5B6SD6nkc5IdZLlFsg3LrrCzsBTpbWrVo3hIaKA8L/DnPqU6H8gShGp4zaP42m2mlZXgeO5yIvV3ZtSJHpgDHLeoklFyidQKVOEAzsE3tR7gqzFTX9Zb9t21M0D79612xzb2O4IIMAXqRQrwGQzIC6I2CQfGFCUfXIcF8CP3a4trMimn03KhgOrYWDidDk9OugHi2Xw2Jw8WJpQyg3QnlUwewyKmJOT4lQxqnYkU12xYYiKGa3h/T/BcdCQWG3Zq+omu6DCZQ0XmEJklgO7MYDaFplCrHDgmh46iGgyEWwLhQEDS2+Rt9w32xeWhngE5iGF6xs13C1pdfFtWl3KadR6USagg3U9zz4evuP7gy9vYaH9khCxTtKNo+85+3lWgwnVeAyt7KUcg6cHURPphkjfoqftIryVZhTMG74391bpycprK3KTcRmynhfAucqBIP4j6zOdTz+pmPkUOoT4fXb1aNf8+MgsNuA8msT6/pqGZNbN7dzkWIsad6WvUR5I1v6xXTsGn+67qm2sFbICbVD9JjfHeYSYT9L7SmA2ZzWQiMtFkEjLJZHZkdpM5kDlM5kTmNJkLmctkbmRuk5UhK9N9Z9v4zsh3j16eke/lJuO+e03Gfa9A9gICyETdP601P6wd4XKRcdlElkkbl3HySXsC94b3YbtQCU8oEDqKzipusGDBggULFixYsLAdmH6KttEJEujMaKczovZfZwPTpvWb5L9FHLJ45fHDtAsyeM9BoaT42QsSM57FdljH+F/IcRpbz8E4jJIf4yXHL35lseL32XFF3++bQqW2v1mKn3+4/R8Fm3R1ABYAAA=='
+        ))
+        user = self.make_user('operator', 'rotor_balancing')
+        client = APIClient()
+        client.force_authenticate(user=user)
+        upload = SimpleUploadedFile(
+            'records.xls',
+            workbook,
+            content_type='application/vnd.ms-excel',
+        )
+
+        response = client.post('/api/rotor-balancing/import/', {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 200)
+        record = RotorBalancing.objects.get(serial_number='ROTOR-XLS-1')
+        self.assertEqual(record.result, 'Pass')
+        self.assertEqual(record.rpm, 3000)
+
+    def test_stator_import_rolls_back_all_rows_when_later_row_fails(self):
+        user = self.make_user('operator', 'stator_testing')
+        client = APIClient()
+        client.force_authenticate(user=user)
+        upload = SimpleUploadedFile(
+            'records.csv',
+            (
+                'BAR CODE,DATE,FINAL RESULT\n'
+                'STATOR-ATOMIC-1,28/07/2026 10:30:00,Pass\n'
+                f'{"S" * 33},28/07/2026 10:31:00,Pass'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = client.post('/api/stator-testing/import/', {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(StatorTestingRecord.objects.filter(serial_number='STATOR-ATOMIC-1').exists())
+
+    def test_rotor_import_rolls_back_all_rows_when_later_row_fails(self):
+        user = self.make_user('operator', 'rotor_balancing')
+        client = APIClient()
+        client.force_authenticate(user=user)
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        headers = [
+            'dd-mm-yy', 'hh:mm:ss', 'Rotor-Type', 'Rotor-Ident',
+            'Mea-Run', 'Bal-Run', 'RpM', 'PL1[G_MM]', 'PL1[DEG]',
+            'PL2[G_MM]', 'PL2[DEG]', 'InTol',
+        ]
+        sheet.append(headers)
+        sheet.append(['28-07-26', '10:30:00', 'Rotor', 'ROTOR-ATOMIC-1', 1, 1, 3000, 1, 1, 1, 1, 'Y'])
+        sheet.append(['28-07-26', '10:31:00', 'Rotor', 'R' * 33, 1, 1, 3000, 1, 1, 1, 1, 'Y'])
+        content = BytesIO()
+        workbook.save(content)
+        upload = SimpleUploadedFile(
+            'records.xlsx',
+            content.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        response = client.post('/api/rotor-balancing/import/', {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(RotorBalancing.objects.filter(serial_number='ROTOR-ATOMIC-1').exists())
+
+    def test_rotor_import_rejects_non_finite_measurements(self):
+        user = self.make_user('operator', 'rotor_balancing')
+        client = APIClient()
+        client.force_authenticate(user=user)
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.append([
+            'dd-mm-yy', 'hh:mm:ss', 'Rotor-Type', 'Rotor-Ident',
+            'Mea-Run', 'Bal-Run', 'RpM', 'PL1[G_MM]', 'PL1[DEG]',
+            'PL2[G_MM]', 'PL2[DEG]', 'InTol',
+        ])
+        sheet.append([
+            '28-07-26', '10:30:00', 'Rotor', 'ROTOR-INFINITY-1',
+            1, 1, 3000, 'Infinity', 1, 1, 1, 'Y',
+        ])
+        content = BytesIO()
+        workbook.save(content)
+        upload = SimpleUploadedFile('records.xlsx', content.getvalue())
+
+        response = client.post('/api/rotor-balancing/import/', {'file': upload}, format='multipart')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('non-finite', response.data['detail'])
+        self.assertFalse(RotorBalancing.objects.filter(serial_number='ROTOR-INFINITY-1').exists())
 
     @patch.dict('os.environ', {}, clear=True)
     def test_seed_command_does_not_create_known_default_user(self):
@@ -284,6 +399,29 @@ class TraceabilityImmutabilityTests(HardeningTestMixin, TestCase):
                 response = client.delete(url_template.format(id=record.pk))
                 self.assertEqual(response.status_code, 409)
                 self.assertTrue(type(record).objects.filter(pk=record.pk).exists())
+
+    def test_admin_production_models_are_view_only(self):
+        request = self.client.request().wsgi_request
+        request.user = User.objects.create_superuser(
+            username='traceability-admin',
+            password='StrongPass!42',
+        )
+        models = (
+            Serial,
+            Part,
+            RotorBalancing,
+            StatorTestingRecord,
+            MagnetInsertion,
+            MotorAssembly,
+        )
+
+        for model in models:
+            with self.subTest(model=model._meta.label):
+                model_admin = admin.site._registry[model]
+                self.assertTrue(model_admin.has_view_permission(request))
+                self.assertFalse(model_admin.has_add_permission(request))
+                self.assertFalse(model_admin.has_change_permission(request))
+                self.assertFalse(model_admin.has_delete_permission(request))
 
 
 class MagnetValidationTests(HardeningTestMixin, TestCase):
@@ -405,6 +543,106 @@ class IdentifierUniquenessTests(HardeningTestMixin, TestCase):
         self.assertEqual(MagnetInsertion.objects.filter(stack_serial='STACK-API-1').count(), 1)
 
 
+class NumericIntegrityConstraintTests(TestCase):
+    def test_rotor_attempt_number_must_be_positive(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            RotorBalancing.objects.create(
+                serial_number='ROTOR-ATTEMPT-ZERO',
+                attempt_no=0,
+                result='Fail',
+            )
+
+    def test_magnet_cycle_time_constraint_blocks_new_invalid_rows(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            MagnetInsertion.objects.create(
+                stack_serial='STACK-CYCLE-ZERO',
+                magnet_serial='MAGNET-CYCLE-ZERO',
+                cycle_time=0,
+                pass_fail=False,
+                shift='A',
+            )
+
+
+class ApiInputValidationTests(HardeningTestMixin, TestCase):
+    def setUp(self):
+        self.user = self.make_user()
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_structured_json_is_rejected_by_text_fields(self):
+        cases = (
+            ('/api/generate', {
+                'part_number': ['30051'],
+                'line_no': '01',
+                'shift': 'A',
+                'part_type': 'Rotor',
+            }),
+            ('/api/add-part', {
+                'serial_number': {'value': 'PART-1'},
+                'part_number': '30051',
+                'part_name': 'Rotor',
+                'line_no': '01',
+                'shift': 'A',
+            }),
+            ('/api/machines/motor-assembly/', {
+                'motor_serial': ['M001'],
+                'rotor_serial': 'R001',
+                'stator_serial': 'S001',
+            }),
+            ('/api/magnet-insertion/create/', {
+                'stack_serial': {'value': 'STACK-1'},
+                'magnet_serial': 'MAGNET-1',
+                'cycle_time': 1,
+                'pass_fail': True,
+                'shift': 'A',
+            }),
+        )
+
+        for url, payload in cases:
+            with self.subTest(url=url):
+                response = self.client.post(url, payload, format='json')
+                self.assertEqual(response.status_code, 400)
+
+    def test_overlong_identifiers_are_rejected_before_database_write(self):
+        response = self.client.post('/api/add-part', {
+            'serial_number': 'S' * 33,
+            'part_number': '30051',
+            'part_name': 'Rotor',
+            'line_no': '01',
+            'shift': 'A',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Part.objects.exists())
+
+    def test_mark_done_normalizes_serial_case(self):
+        serial = Serial.objects.create(
+            serial_number='MARK-CASE-1',
+            part_number='30051',
+            line_no='01',
+            shift='A',
+            part_type='Rotor',
+        )
+
+        response = self.client.post('/api/mark-done', {'serial': 'mark-case-1'}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        serial.refresh_from_db()
+        self.assertEqual(serial.status, 'Marked')
+
+    def test_login_rejects_structured_username_without_server_error(self):
+        client = Client(enforce_csrf_checks=True)
+        client.get('/')
+        response = client.post(
+            '/api/login',
+            data=json.dumps({'username': ['admin'], 'password': 'password'}),
+            content_type='application/json',
+            HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value,
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+
 class ProductionLogTimezoneTests(HardeningTestMixin, TestCase):
     def test_daily_aggregation_uses_plant_local_date(self):
         user = self.make_user()
@@ -427,6 +665,123 @@ class ProductionLogTimezoneTests(HardeningTestMixin, TestCase):
         today_bucket = next(row for row in response.data['daily'] if row['date'] == local_day.isoformat())
         self.assertEqual(today_bucket['total'], 1)
         self.assertEqual(today_bucket['A'], 1)
+
+    def test_invalid_day_returns_validation_error(self):
+        user = self.make_user()
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        response = client.get('/api/production-log/day?day=not-a-date')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('YYYY-MM-DD', response.data['detail'])
+
+    def test_day_endpoint_defaults_to_plant_today(self):
+        user = self.make_user()
+        client = APIClient()
+        client.force_authenticate(user=user)
+        Serial.objects.create(
+            serial_number='TODAY-DEFAULT-1',
+            part_number='30051',
+            line_no='01',
+            shift='A',
+            part_type='Rotor',
+        )
+
+        response = client.get('/api/production-log/day')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['date'], timezone.localdate().isoformat())
+        self.assertEqual(response.data['total'], 1)
+
+    def test_line_filter_applies_to_summary_and_day_detail(self):
+        user = self.make_user()
+        client = APIClient()
+        client.force_authenticate(user=user)
+        for line_no in ('01', '02'):
+            Serial.objects.create(
+                serial_number=f'LINE-FILTER-{line_no}',
+                part_number='30051',
+                line_no=line_no,
+                shift='A',
+                part_type='Rotor',
+            )
+        day = timezone.localdate().isoformat()
+
+        summary = client.get('/api/production-log?line_no=01')
+        detail = client.get(f'/api/production-log/day?day={day}&line_no=01')
+
+        self.assertEqual(summary.status_code, 200)
+        self.assertEqual(summary.data['kpi']['total_parts'], 1)
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.data['total'], 1)
+        self.assertEqual(detail.data['records'][0]['line_no'], '01')
+
+    def test_stats_metrics_are_not_limited_to_serial_feed_size(self):
+        user = self.make_user()
+        client = APIClient()
+        client.force_authenticate(user=user)
+        Serial.objects.bulk_create([
+            Serial(
+                serial_number=f'LIVE-METRIC-{index:03d}',
+                part_number='30051',
+                line_no='01',
+                shift='A',
+                part_type='Rotor',
+            )
+            for index in range(105)
+        ])
+
+        response = client.get('/api/stats')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['live_rate'], 105)
+        self.assertEqual(response.data['current_shift']['count'], 105)
+        self.assertIn(response.data['current_shift']['id'], ('A', 'B', 'C', 'G'))
+
+
+class SerialListHardeningTests(HardeningTestMixin, TestCase):
+    def test_serial_list_uses_latest_rotor_attempt_once_per_serial(self):
+        user = self.make_user()
+        client = APIClient()
+        client.force_authenticate(user=user)
+        Serial.objects.create(
+            serial_number='LINKED-ROTOR-1',
+            part_number='30051',
+            line_no='01',
+            shift='A',
+            part_type='Rotor',
+        )
+        RotorBalancing.objects.create(
+            serial_number='LINKED-ROTOR-1',
+            attempt_no=1,
+            result='Pass',
+        )
+        RotorBalancing.objects.create(
+            serial_number='LINKED-ROTOR-1',
+            attempt_no=2,
+            result='Fail',
+        )
+        RotorBalancing.objects.create(
+            serial_number='ISOLATED-ROTOR-1',
+            attempt_no=1,
+            result='Fail',
+        )
+        RotorBalancing.objects.create(
+            serial_number='ISOLATED-ROTOR-1',
+            attempt_no=2,
+            result='Pass',
+        )
+
+        with self.assertNumQueries(2):
+            response = client.get('/api/serials')
+
+        self.assertEqual(response.status_code, 200)
+        linked = next(row for row in response.data if row['serial_number'] == 'LINKED-ROTOR-1')
+        isolated = [row for row in response.data if row['serial_number'] == 'ISOLATED-ROTOR-1']
+        self.assertEqual(linked['rotor_result'], 'Fail')
+        self.assertEqual(len(isolated), 1)
+        self.assertEqual(isolated[0]['rotor_result'], 'Pass')
 
 
 class UiHardeningTests(TestCase):

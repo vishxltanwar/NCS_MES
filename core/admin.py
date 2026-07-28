@@ -1,10 +1,24 @@
 # core/admin.py
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Serial, Part, MotorAssembly, MagnetInsertion, UserProfile
+from .models import (
+    MagnetInsertion,
+    MotorAssembly,
+    Part,
+    RotorBalancing,
+    Serial,
+    StatorTestingRecord,
+    UserProfile,
+)
 
 
 class ImmutableTraceabilityAdminMixin:
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
     def has_delete_permission(self, request, obj=None):
         return False
 
@@ -36,6 +50,22 @@ class PartAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin):
     list_display = ('serial_number', 'part_number', 'part_name', 'line_no', 'shift', 'added_by', 'created_at')
     list_filter = ('part_name', 'shift')
     search_fields = ('serial_number', 'part_number')
+
+
+@admin.register(RotorBalancing)
+class RotorBalancingAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin):
+    list_display = ('serial_number', 'attempt_no', 'result', 'rotor_type', 'recorded_at', 'imported_at')
+    list_filter = ('result', 'rotor_type')
+    search_fields = ('serial_number',)
+    list_per_page = 50
+
+
+@admin.register(StatorTestingRecord)
+class StatorTestingRecordAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin):
+    list_display = ('serial_number', 'final_result', 'operator', 'recorded_at', 'imported_at')
+    list_filter = ('final_result',)
+    search_fields = ('serial_number', 'operator', 'code_number')
+    list_per_page = 50
 
 
 @admin.register(MagnetInsertion)
