@@ -3,7 +3,7 @@ import gzip
 import json
 from datetime import datetime, time
 from io import BytesIO, StringIO
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 import openpyxl
 from django.contrib import admin
@@ -24,7 +24,7 @@ from core.models import (
     Serial,
     StatorTestingRecord,
 )
-from core.views import _details_table, _pdf_styles
+from core.views import _details_table, _pdf_styles, write_to_shared_file
 
 
 class HardeningTestMixin:
@@ -148,6 +148,61 @@ class CsrfAndAuthenticationHardeningTests(HardeningTestMixin, TestCase):
         response = APIClient().get('/api/scanner/poll/')
 
         self.assertIn(response.status_code, (401, 403))
+
+
+class HardwareConfigurationTests(HardeningTestMixin, TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.make_user())
+
+    @override_settings(LASER_SERIAL_FILE=r'\\configured-host\laser\serial.txt')
+    def test_laser_delivery_uses_configured_file_path(self):
+        file_mock = mock_open()
+
+        with patch('builtins.open', file_mock):
+            write_to_shared_file('SERIAL-31')
+
+        file_mock.assert_called_once_with(
+            r'\\configured-host\laser\serial.txt',
+            'w',
+            encoding='utf-8',
+            newline='',
+        )
+        file_mock().write.assert_called_once_with('SERIAL-31')
+
+    @override_settings(
+        SCANNER_PORT='COM9',
+        SCANNER_BAUDRATE=57600,
+        SCANNER_TIMEOUT=0.25,
+    )
+    @patch('utils.serial_reader.read_scan_line', return_value='SCANNER-31')
+    def test_scanner_poll_uses_configured_connection(self, read_mock):
+        response = self.client.get('/api/scanner/poll/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['data'], 'SCANNER-31')
+        read_mock.assert_called_once_with(
+            port='COM9',
+            baudrate=57600,
+            timeout=0.25,
+        )
+
+    @override_settings(PLC_HOST='plc.example', PLC_PORT=1502, PLC_TIMEOUT=0.5)
+    @patch('core.views.ModbusTcpClient', side_effect=OSError('internal PLC route details'))
+    def test_plc_status_uses_config_and_hides_exception_details(self, client_mock):
+        response = self.client.get('/api/magnet-insertion/status/')
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.data, {
+            'connected': False,
+            'error': 'PLC unavailable',
+        })
+        self.assertNotIn('internal PLC route details', json.dumps(response.data))
+        client_mock.assert_called_once_with(
+            'plc.example',
+            port=1502,
+            timeout=0.5,
+        )
 
 
 class ImportAndSeederHardeningTests(HardeningTestMixin, TestCase):

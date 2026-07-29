@@ -142,6 +142,16 @@ MAX_IMPORT_COLUMNS = int(os.getenv('MAX_IMPORT_COLUMNS', 100))
 LOGIN_FAILURE_LIMIT = int(os.getenv('LOGIN_FAILURE_LIMIT', 5))
 LOGIN_FAILURE_WINDOW_SECONDS = int(os.getenv('LOGIN_FAILURE_WINDOW_SECONDS', 900))
 
+# Hardware connectivity. Endpoint values belong in the deployment environment,
+# not in source control.
+LASER_SERIAL_FILE = os.getenv('LASER_SERIAL_FILE', '').strip()
+SCANNER_PORT = os.getenv('SCANNER_PORT', 'COM1').strip()
+SCANNER_BAUDRATE = int(os.getenv('SCANNER_BAUDRATE', 115200))
+SCANNER_TIMEOUT = float(os.getenv('SCANNER_TIMEOUT', 1))
+PLC_HOST = os.getenv('PLC_HOST', '').strip()
+PLC_PORT = int(os.getenv('PLC_PORT', 502))
+PLC_TIMEOUT = float(os.getenv('PLC_TIMEOUT', 1))
+
 # ── Default PK ────────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

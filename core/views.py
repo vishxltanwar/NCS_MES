@@ -67,11 +67,10 @@ def csrf_required(view_func):
     return protected
 
 # ── Shared file path ─────────────────────────────────────────────────────────
-LASER_SERIAL_FILE = r"\\172.16.61.202\Common Folder\Machine Data\LaserData\serial.txt"
-
-
 def write_to_shared_file(serial: str) -> None:
-    with open(LASER_SERIAL_FILE, "w", encoding="utf-8", newline="") as f:
+    if not settings.LASER_SERIAL_FILE:
+        raise RuntimeError('LASER_SERIAL_FILE is not configured')
+    with open(settings.LASER_SERIAL_FILE, "w", encoding="utf-8", newline="") as f:
         f.write(serial)
 
 
@@ -1035,7 +1034,11 @@ def api_scanner_poll(request):
     try:
         from utils.serial_reader import read_scan_line
 
-        cleaned_value = read_scan_line(port="COM1", baudrate=115200, timeout=1)
+        cleaned_value = read_scan_line(
+            port=settings.SCANNER_PORT,
+            baudrate=settings.SCANNER_BAUDRATE,
+            timeout=settings.SCANNER_TIMEOUT,
+        )
         if cleaned_value:
             return Response({"data": cleaned_value, "received": True})
 
@@ -2136,8 +2139,15 @@ def _decode_modbus_string(registers):
 @api_view(['GET'])
 @api_access_required('magnet_read')
 def api_magnet_insertion_status(request):
-    client = ModbusTcpClient('192.168.3.10', port=502, timeout=1)
+    client = None
     try:
+        if not settings.PLC_HOST:
+            raise RuntimeError('PLC_HOST is not configured')
+        client = ModbusTcpClient(
+            settings.PLC_HOST,
+            port=settings.PLC_PORT,
+            timeout=settings.PLC_TIMEOUT,
+        )
         if not client.connect():
             return Response({'connected': False})
 
@@ -2162,7 +2172,12 @@ def api_magnet_insertion_status(request):
             'pass_fail': None,
             'cycle_time': None,
         })
-    except Exception as e:
-        return Response({'connected': False, 'error': str(e)})
+    except Exception:
+        logger.exception('PLC status poll failed')
+        return Response({
+            'connected': False,
+            'error': 'PLC unavailable',
+        }, status=503)
     finally:
-        client.close()
+        if client is not None:
+            client.close()
