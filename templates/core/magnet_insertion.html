@@ -407,6 +407,7 @@ setInterval(async () => {
 async function loadRecords() {
   try {
     const res = await fetch('/api/magnet-insertion/');
+    await requireOk(res, 'Unable to load magnet insertion records');
     const data = await res.json();
     renderTable(data);
   } catch (err) {
@@ -417,6 +418,7 @@ async function loadRecords() {
 async function loadStats() {
   try {
     const res = await fetch('/api/magnet-insertion/stats/');
+    await requireOk(res, 'Unable to load magnet insertion statistics');
     const data = await res.json();
     document.getElementById('kpi-total').textContent = data.total;
     document.getElementById('kpi-passed').textContent = data.passed;

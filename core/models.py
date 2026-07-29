@@ -14,6 +14,24 @@ def _normalize_identifier(value):
     return str(value).strip().upper()
 
 
+PART_TYPE_ROTOR = 'Rotor'
+PART_TYPE_STATOR = 'Stator'
+PART_TYPE_MOTOR = 'Motor'
+PART_TYPE_CHOICES = [
+    (PART_TYPE_ROTOR, PART_TYPE_ROTOR),
+    (PART_TYPE_STATOR, PART_TYPE_STATOR),
+    (PART_TYPE_MOTOR, PART_TYPE_MOTOR),
+]
+PART_TYPES = tuple(value for value, _label in PART_TYPE_CHOICES)
+
+
+def normalize_part_type(value):
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    return next((part_type for part_type in PART_TYPES if part_type.casefold() == normalized), None)
+
+
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_VIEWER)
@@ -48,7 +66,7 @@ class Serial(models.Model):
     part_number   = models.CharField(max_length=10, default='')
     line_no       = models.CharField(max_length=4, default='')
     shift         = models.CharField(max_length=2, default='')
-    part_type     = models.CharField(max_length=20, default='')
+    part_type     = models.CharField(max_length=20, choices=PART_TYPE_CHOICES)
     created_at    = models.DateTimeField(auto_now_add=True)
     status        = models.CharField(max_length=20, default='Pending')
     laser_delivery_status = models.CharField(
@@ -70,10 +88,15 @@ class Serial(models.Model):
         ordering = ['-created_at']
         constraints = [
             models.UniqueConstraint(Lower('serial_number'), name='serial_number_ci_unique'),
+            models.CheckConstraint(
+                condition=models.Q(part_type__in=PART_TYPES),
+                name='serial_part_type_valid',
+            ),
         ]
 
     def save(self, *args, **kwargs):
         self.serial_number = _normalize_identifier(self.serial_number)
+        self.part_type = normalize_part_type(self.part_type) or self.part_type
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -108,7 +131,7 @@ class LoginThrottle(models.Model):
 class Part(models.Model):
     serial_number = models.CharField(max_length=32, unique=True, null=True, blank=True, db_index=True)
     part_number   = models.CharField(max_length=10, db_index=True)
-    part_name     = models.CharField(max_length=50)
+    part_name     = models.CharField(max_length=50, choices=PART_TYPE_CHOICES)
     line_no       = models.CharField(max_length=4)
     shift         = models.CharField(max_length=2)
     created_at    = models.DateTimeField(auto_now_add=True)
@@ -119,10 +142,15 @@ class Part(models.Model):
         ordering = ['-created_at']
         constraints = [
             models.UniqueConstraint(Lower('serial_number'), name='part_serial_number_ci_unique'),
+            models.CheckConstraint(
+                condition=models.Q(part_name__in=PART_TYPES),
+                name='part_name_valid',
+            ),
         ]
 
     def save(self, *args, **kwargs):
         self.serial_number = _normalize_identifier(self.serial_number)
+        self.part_name = normalize_part_type(self.part_name) or self.part_name
         super().save(*args, **kwargs)
 
     def __str__(self):

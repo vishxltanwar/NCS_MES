@@ -6,6 +6,7 @@ const API = {
     async fetchStats() {
         try {
             const res = await fetch('/api/stats');
+            await requireOk(res, 'Unable to load production statistics');
             return await res.json();
         } catch (err) {
             console.error('Error fetching stats:', err);
@@ -16,6 +17,7 @@ const API = {
     async fetchSerials() {
         try {
             const res = await fetch('/api/serials');
+            await requireOk(res, 'Unable to load serial records');
             return await res.json();
         } catch (err) {
             console.error('Error fetching serials:', err);
@@ -30,6 +32,7 @@ const API = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ serial: serial })
             });
+            await requireOk(res, 'Unable to update serial status');
             return await res.json();
         } catch (err) {
             console.error('Error marking done:', err);
@@ -43,6 +46,7 @@ const API = {
         try {
             const endpoint = type === 'stator' ? 'stator-testing' : `${type}-balancing`;
             const res = await fetch(`/api/${endpoint}/`);
+            await requireOk(res, `Unable to load ${type} records`);
             return await res.json();
         } catch (err) {
             console.error(`Error fetching ${type} records:`, err);

@@ -41,9 +41,11 @@ from .models import (
     MagnetInsertion,
     MotorAssembly,
     Part,
+    PART_TYPES,
     RotorBalancing,
     Serial,
     StatorTestingRecord,
+    normalize_part_type,
 )
 from .rbac import (
     allowed_pages,
@@ -158,6 +160,14 @@ def _request_text(data, field, *, label=None, max_length=None, strip=True, upper
     if max_length is not None and len(value) > max_length:
         raise ValueError(f'{display_name} must be no more than {max_length} characters')
     return value.upper() if upper else value
+
+
+def _request_part_type(data, field, *, label):
+    value = _request_text(data, field, label=label, max_length=20)
+    part_type = normalize_part_type(value)
+    if not part_type:
+        raise ValueError(f'{label} must be one of: {", ".join(PART_TYPES)}')
+    return part_type
 
 
 def _render_page(request, template_name, active_page):
@@ -354,7 +364,7 @@ def api_generate(request):
         part_number = _request_text(request.data, 'part_number', label='Part number', max_length=5)
         line_no = _request_text(request.data, 'line_no', label='Line number', max_length=2)
         shift_val = _request_text(request.data, 'shift', max_length=1, upper=True)
-        part_type = _request_text(request.data, 'part_type', label='Part type', max_length=20)
+        part_type = _request_part_type(request.data, 'part_type', label='Part type')
     except ValueError as exc:
         return Response({'detail': str(exc)}, status=400)
 
@@ -370,7 +380,7 @@ def api_generate(request):
             part_number,
             line_no,
             shift_val,
-            part_type or '',
+            part_type,
         )
     except ValueError as exc:
         return Response({'detail': str(exc)}, status=400)
@@ -1097,7 +1107,7 @@ def api_add_part(request):
     try:
         serial_number = _request_text(request.data, 'serial_number', label='Serial number', max_length=32, upper=True)
         part_number = _request_text(request.data, 'part_number', label='Part number', max_length=5)
-        part_name = _request_text(request.data, 'part_name', label='Part name', max_length=50)
+        part_name = _request_part_type(request.data, 'part_name', label='Part name')
         line_no = _request_text(request.data, 'line_no', label='Line number', max_length=2)
         shift_val = _request_text(request.data, 'shift', max_length=1, upper=True)
     except ValueError as exc:
@@ -1105,8 +1115,8 @@ def api_add_part(request):
 
     if not part_number.isdigit() or len(part_number) != 5:
         return Response({'detail': 'Part number must be exactly 5 digits'}, status=400)
-    if not part_name:
-        return Response({'detail': 'Part name is required'}, status=400)
+    if not serial_number:
+        return Response({'detail': 'Serial number is required'}, status=400)
     if not line_no.isdigit() or len(line_no) != 2:
         return Response({'detail': 'Line number must be 2 digits (e.g. 01)'}, status=400)
     if shift_val not in ('A', 'B', 'C', 'G'):

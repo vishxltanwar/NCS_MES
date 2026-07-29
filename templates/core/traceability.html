@@ -110,9 +110,16 @@
 
 {% block scripts %}
 async function loadAll() {
-const res = await fetch('/api/serials');
-const serials = await res.json();
 const tbody = document.getElementById('all-tbody');
+let serials;
+try {
+  const res = await fetch('/api/serials');
+  await requireOk(res, 'Unable to load traceability records');
+  serials = await res.json();
+} catch (error) {
+  tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-center text-red-500 text-xs">' + escapeHtml(error.message) + '</td></tr>';
+  return;
+}
 
 if (!serials.length) {
 tbody.innerHTML = `<tr>

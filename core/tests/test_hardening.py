@@ -79,6 +79,7 @@ class SerialGenerationHardeningTests(HardeningTestMixin, TestCase):
             part_number='12345',
             line_no='01',
             shift='A',
+            part_type='Rotor',
             laser_delivery_status=Serial.LASER_DELIVERY_FAILED,
         )
 
@@ -415,7 +416,7 @@ class TraceabilityImmutabilityTests(HardeningTestMixin, TestCase):
         client = APIClient()
         client.force_authenticate(user=user)
         records = [
-            (Serial.objects.create(serial_number='SERIAL-IMMUTABLE'), '/api/serials/{id}'),
+            (Serial.objects.create(serial_number='SERIAL-IMMUTABLE', part_type='Rotor'), '/api/serials/{id}'),
             (
                 Part.objects.create(
                     serial_number='PART-IMMUTABLE',
@@ -698,6 +699,66 @@ class ApiInputValidationTests(HardeningTestMixin, TestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class CanonicalPartTypeTests(HardeningTestMixin, TestCase):
+    def setUp(self):
+        self.user = self.make_user()
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    @patch('core.views.write_to_shared_file')
+    def test_generate_normalizes_part_type(self, write_mock):
+        response = self.client.post('/api/generate', {
+            'part_number': '30051',
+            'line_no': '01',
+            'shift': 'a',
+            'part_type': '  rotor  ',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Serial.objects.get(serial_number=response.data['serial']).part_type, 'Rotor')
+
+    @patch('core.views.write_to_shared_file')
+    def test_generate_rejects_unknown_part_type(self, write_mock):
+        response = self.client.post('/api/generate', {
+            'part_number': '30051',
+            'line_no': '01',
+            'shift': 'A',
+            'part_type': 'Impeller',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Rotor, Stator, Motor', response.data['detail'])
+        write_mock.assert_not_called()
+
+    def test_add_part_normalizes_part_name(self):
+        response = self.client.post('/api/add-part', {
+            'serial_number': '3005101A26001001',
+            'part_number': '30051',
+            'part_name': 'STATOR',
+            'line_no': '01',
+            'shift': 'A',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Part.objects.get().part_name, 'Stator')
+
+    def test_add_part_requires_serial_number(self):
+        response = self.client.post('/api/add-part', {
+            'serial_number': '',
+            'part_number': '30051',
+            'part_name': 'Rotor',
+            'line_no': '01',
+            'shift': 'A',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['detail'], 'Serial number is required')
+
+    def test_database_rejects_noncanonical_part_type(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Serial.objects.create(serial_number='INVALID-PART-TYPE', part_type='Impeller')
+
+
 class ProductionLogTimezoneTests(HardeningTestMixin, TestCase):
     def test_daily_aggregation_uses_plant_local_date(self):
         user = self.make_user()
@@ -851,8 +912,19 @@ class UiHardeningTests(TestCase):
             content = template.read()
 
         self.assertIn("headers.set('X-CSRFToken'", content)
+        self.assertIn("response.status === 401", content)
+        self.assertIn("window.location.assign('/')", content)
+        self.assertIn('async function requireOk', content)
         self.assertIn("text.textContent = String(msg ?? '')", content)
         self.assertNotIn('<span>${msg}</span>', content)
+
+    def test_machine_overview_does_not_claim_to_persist_maintenance(self):
+        with open('templates/core/machine_overview.html', encoding='utf-8') as template:
+            content = template.read()
+
+        self.assertNotIn('resolveIssue()', content)
+        self.assertNotIn('Log &amp; Resolve', content)
+        self.assertIn('This view is informational', content)
 
     def test_magnet_page_has_manual_process_fallback(self):
         with open('templates/core/magnet_insertion.html', encoding='utf-8') as template:

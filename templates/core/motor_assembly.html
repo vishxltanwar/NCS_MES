@@ -123,6 +123,7 @@ function resultBadge(value) {
 async function loadLinks() {
   try {
     const res = await fetch('/api/machines/motor-assembly/');
+    await requireOk(res, 'Unable to load motor links');
     allLinks = await res.json();
     renderTable();
   } catch (err) {

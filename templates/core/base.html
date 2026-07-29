@@ -236,7 +236,8 @@
 
     // Add Django's CSRF token to every same-origin state-changing request.
     const nativeFetch = window.fetch.bind(window);
-    window.fetch = function(input, init = {}) {
+    let sessionRedirectStarted = false;
+    window.fetch = async function(input, init = {}) {
       const options = { ...init };
       const method = String(options.method || 'GET').toUpperCase();
       const url = new URL(typeof input === 'string' ? input : input.url, window.location.href);
@@ -246,8 +247,34 @@
         options.headers = headers;
         options.credentials = options.credentials || 'same-origin';
       }
-      return nativeFetch(input, options);
+      const response = await nativeFetch(input, options);
+      if (
+        url.origin === window.location.origin
+        && url.pathname.startsWith('/api/')
+        && response.status === 401
+      ) {
+        if (!sessionRedirectStarted) {
+          sessionRedirectStarted = true;
+          window.location.assign('/');
+        }
+        throw new Error('Your session has expired. Redirecting to sign in.');
+      }
+      return response;
     };
+
+    async function requireOk(response, fallbackMessage = 'Request failed') {
+      if (response.ok) return response;
+      let detail = fallbackMessage;
+      try {
+        const payload = await response.clone().json();
+        detail = payload.detail || payload.error || fallbackMessage;
+      } catch (error) {
+        // The server may return an empty or non-JSON error page.
+      }
+      const requestError = new Error(detail);
+      requestError.status = response.status;
+      throw requestError;
+    }
 
     // Live clock
     function updateClock() {
@@ -257,8 +284,11 @@
 
     // Logout
     async function handleLogout() {
-      await fetch('/api/logout', { method: 'POST' });
-      window.location.href = '/';
+      try {
+        await fetch('/api/logout', { method: 'POST' });
+      } finally {
+        window.location.href = '/';
+      }
     }
 
     // Toast utility
