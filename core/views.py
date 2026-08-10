@@ -1431,6 +1431,7 @@ def api_rotor_balancing_import(request):
 
         imported = 0
         updated = 0
+        skipped = 0
         file_attempt_counts = {}
         
         def safe_int(val):
@@ -1490,6 +1491,16 @@ def api_rotor_balancing_import(request):
                     'plane2_weight': safe_float(row[col_indices['PL2[G_MM]']]),
                     'plane2_degree': safe_float(row[col_indices['PL2[DEG]']]),
                 }
+                duplicate_exists = any(
+                    all(getattr(existing, field) == value for field, value in row_data.items())
+                    for existing in RotorBalancing.objects.filter(
+                        serial_number__iexact=serial_num,
+                    )
+                )
+                if duplicate_exists:
+                    skipped += 1
+                    continue
+
                 existing_attempt = RotorBalancing.objects.filter(
                     serial_number__iexact=serial_num,
                     attempt_no=incoming_attempt_no,
@@ -1499,8 +1510,6 @@ def api_rotor_balancing_import(request):
                         setattr(existing_attempt, field, value)
                     existing_attempt.save(update_fields=list(row_data.keys()))
                     updated += 1
-                elif existing_attempt and recorded_at and existing_attempt.recorded_at == recorded_at:
-                    continue
                 else:
                     attempt_no = RotorBalancing.objects.filter(serial_number__iexact=serial_num).count() + 1
                     RotorBalancing.objects.create(
@@ -1510,7 +1519,13 @@ def api_rotor_balancing_import(request):
                     )
                     imported += 1
                 
-        return Response({'detail': f'{imported} rotor balancing attempts imported, {updated} existing attempts updated.'})
+        return Response({
+            'detail': (
+                f'{imported} rotor balancing attempts imported, '
+                f'{updated} existing attempts updated, '
+                f'{skipped} duplicate rows skipped.'
+            )
+        })
 
     except ValueError as exc:
         transaction.set_rollback(True)
@@ -1698,10 +1713,6 @@ def api_stator_testing_import(request):
             if len(sn_val) > 32:
                 raise ValueError('Stator serial numbers must be no more than 32 characters.')
                 
-            if StatorTestingRecord.objects.filter(serial_number__iexact=sn_val).exists():
-                skipped += 1
-                continue
-
             date_val = get_val(row, 'DATE')
             recorded_at = None
             if date_val:
@@ -1766,6 +1777,17 @@ def api_stator_testing_import(request):
                         f'{model_field.verbose_name.title()} exceeds '
                         f'{model_field.max_length} characters.'
                     )
+
+            duplicate_exists = any(
+                all(getattr(existing, field) == value for field, value in record_data.items())
+                for existing in StatorTestingRecord.objects.filter(
+                    serial_number__iexact=sn_val,
+                )
+            )
+            if duplicate_exists:
+                skipped += 1
+                continue
+
             StatorTestingRecord.objects.create(**record_data)
             imported += 1
 

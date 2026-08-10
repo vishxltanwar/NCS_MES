@@ -198,7 +198,7 @@ class RotorBalancing(models.Model):
         return f"{self.serial_number} attempt {self.attempt_no} - {self.result}"
 
 class StatorTestingRecord(models.Model):
-    serial_number = models.CharField(max_length=32, unique=True, db_index=True)
+    serial_number = models.CharField(max_length=32, db_index=True)
     recorded_at = models.DateTimeField(null=True, blank=True)
     final_result = models.CharField(max_length=20)
     
@@ -245,10 +245,6 @@ class StatorTestingRecord(models.Model):
     class Meta:
         db_table = 'stator_testing'
         ordering = ['-imported_at']
-        constraints = [
-            models.UniqueConstraint(Lower('serial_number'), name='stator_serial_number_ci_unique'),
-        ]
-
     def save(self, *args, **kwargs):
         self.serial_number = _normalize_identifier(self.serial_number)
         super().save(*args, **kwargs)

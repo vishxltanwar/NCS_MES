@@ -149,6 +149,81 @@ class MotorTraceabilityApiTests(TestCase):
         self.assertEqual(second_recorded.minute, 5)
         self.assertNotEqual(attempts[0].recorded_at, attempts[1].recorded_at)
 
+    def test_rotor_import_skips_only_rows_with_all_values_matching(self):
+        first_response = self.client.post(
+            '/api/rotor-balancing/import/',
+            {'file': self.build_rotor_upload()},
+            format='multipart',
+        )
+        duplicate_response = self.client.post(
+            '/api/rotor-balancing/import/',
+            {'file': self.build_rotor_upload()},
+            format='multipart',
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(duplicate_response.status_code, 200)
+        self.assertEqual(RotorBalancing.objects.filter(serial_number='R001').count(), 2)
+        self.assertIn('2 duplicate rows skipped', duplicate_response.data['detail'])
+
+        workbook = openpyxl.load_workbook(self.build_rotor_upload())
+        workbook.active['G2'] = 1300
+        buffer = BytesIO()
+        workbook.save(buffer)
+        changed_upload = SimpleUploadedFile(
+            'rotor-changed.xlsx',
+            buffer.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        changed_response = self.client.post(
+            '/api/rotor-balancing/import/',
+            {'file': changed_upload},
+            format='multipart',
+        )
+
+        self.assertEqual(changed_response.status_code, 200)
+        self.assertEqual(RotorBalancing.objects.filter(serial_number='R001').count(), 3)
+        self.assertTrue(
+            RotorBalancing.objects.filter(serial_number='R001', rpm=1300).exists()
+        )
+
+    def test_stator_import_skips_exact_row_but_keeps_changed_row(self):
+        def stator_upload(result):
+            return SimpleUploadedFile(
+                'stator.csv',
+                (
+                    'BAR CODE,DATE,FINAL RESULT,OPERATOR\n'
+                    f'S001,20/07/2026 10:00:00,{result},OP1'
+                ).encode('utf-8'),
+                content_type='text/csv',
+            )
+
+        first_response = self.client.post(
+            '/api/stator-testing/import/',
+            {'file': stator_upload('Pass')},
+            format='multipart',
+        )
+        duplicate_response = self.client.post(
+            '/api/stator-testing/import/',
+            {'file': stator_upload('Pass')},
+            format='multipart',
+        )
+        changed_response = self.client.post(
+            '/api/stator-testing/import/',
+            {'file': stator_upload('Fail')},
+            format='multipart',
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(duplicate_response.status_code, 200)
+        self.assertIn('1 skipped', duplicate_response.data['detail'])
+        self.assertEqual(changed_response.status_code, 200)
+        self.assertEqual(StatorTestingRecord.objects.filter(serial_number='S001').count(), 2)
+        self.assertEqual(
+            set(StatorTestingRecord.objects.filter(serial_number='S001').values_list('final_result', flat=True)),
+            {'Pass', 'Fail'},
+        )
+
     def test_rotor_import_backfills_existing_null_recorded_at_attempts(self):
         RotorBalancing.objects.create(serial_number='R001', attempt_no=1, result='Fail')
         RotorBalancing.objects.create(serial_number='R001', attempt_no=2, result='Pass')
