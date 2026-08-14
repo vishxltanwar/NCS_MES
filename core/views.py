@@ -1539,7 +1539,23 @@ def api_rotor_balancing_import(request):
 @api_view(['GET'])
 @api_access_required('rotor_read')
 def api_rotor_balancing_list(request):
-    records = RotorBalancing.objects.all().order_by('-imported_at')[:200]
+    # The overview needs one row per rotor. Limiting raw attempts before grouping
+    # caused rotors with older imports to disappear once the table exceeded 200
+    # attempts, even though their records were present in the database.
+    records = RotorBalancing.objects.annotate(
+        serial_rank=models.Window(
+            expression=RowNumber(),
+            partition_by=[Lower('serial_number')],
+            order_by=[
+                models.F('attempt_no').desc(),
+                models.F('recorded_at').desc(nulls_last=True),
+                models.F('imported_at').desc(),
+                models.F('id').desc(),
+            ],
+        ),
+    ).filter(
+        serial_rank=1,
+    ).order_by('-recorded_at', '-imported_at')
     return Response([_rotor_balancing_payload(r) for r in records])
 
 

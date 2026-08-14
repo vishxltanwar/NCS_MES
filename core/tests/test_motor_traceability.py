@@ -249,3 +249,29 @@ class MotorTraceabilityApiTests(TestCase):
         self.assertEqual(response.data['attempt_count'], 2)
         self.assertEqual(response.data['result'], 'Pass')
         self.assertEqual([attempt['attempt_no'] for attempt in response.data['attempts']], [1, 2])
+
+    def test_rotor_list_returns_latest_attempt_for_every_serial_beyond_old_limit(self):
+        RotorBalancing.objects.bulk_create([
+            RotorBalancing(
+                serial_number=f'R{index:03d}',
+                attempt_no=1,
+                result='Fail',
+                rpm=1200,
+            )
+            for index in range(205)
+        ])
+        RotorBalancing.objects.create(
+            serial_number='R000',
+            attempt_no=2,
+            result='Pass',
+            rpm=1300,
+        )
+
+        response = self.client.get('/api/rotor-balancing/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 205)
+        self.assertEqual(len({row['serial_number'] for row in response.data}), 205)
+        latest_r000 = next(row for row in response.data if row['serial_number'] == 'R000')
+        self.assertEqual(latest_r000['attempt_no'], 2)
+        self.assertEqual(latest_r000['result'], 'Pass')
