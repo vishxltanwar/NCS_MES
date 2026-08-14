@@ -25,10 +25,17 @@
         <h3 class="font-bold text-sm text-slate-900 uppercase tracking-tight">Assembly Link</h3>
       </div>
       <form id="assembly-form" class="p-5 space-y-4" onsubmit="submitLink(event)">
+        <div id="assembly-scan-state" role="status" aria-live="polite">
+          <div><span data-scan-icon></span></div>
+          <div>
+            <p data-scan-label class="text-base font-black uppercase tracking-wide"></p>
+            <p data-scan-detail class="mt-0.5 text-sm font-semibold opacity-75"></p>
+          </div>
+        </div>
         <div>
           <label for="motor-serial" class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Motor Serial Number</label>
           <input id="motor-serial" name="motor_serial" autocomplete="off"
-            class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm font-semibold text-slate-900 outline-none focus:border-primary focus:bg-white focus:ring-4 focus:ring-primary/10"
+            autofocus class="w-full rounded-2xl border-4 border-primary/40 bg-white px-4 py-4 font-mono text-xl font-black tracking-wider text-slate-900 outline-none focus:border-primary focus:ring-8 focus:ring-primary/10"
             placeholder="Scan or enter motor serial">
         </div>
         <div>
@@ -101,6 +108,17 @@
 {% block scripts %}
 let allLinks = [];
 let isSaving = false;
+const assemblyScanState = new ScanStateMachine('assembly-scan-state', {
+  readyText: 'Scan motor, rotor, then stator',
+});
+
+function currentAssemblyScanInput() {
+  return ['motor-serial', 'rotor-serial', 'stator-serial']
+    .map(id => document.getElementById(id))
+    .find(input => !input.value.trim()) || document.getElementById('motor-serial');
+}
+
+assemblyScanState.keepFocus(currentAssemblyScanInput);
 
 function escapeHtml(value) {
   return String(value || '').replace(/[&<>"']/g, function(ch) {
@@ -185,6 +203,7 @@ function editLink(id) {
 function resetForm() {
   document.getElementById('assembly-form').reset();
   document.getElementById('form-hint').textContent = 'Existing motor links are blocked from changing to a different rotor or stator.';
+  document.getElementById('motor-serial').focus({ preventScroll: true });
 }
 
 async function submitLink(event) {
@@ -199,6 +218,7 @@ async function submitLink(event) {
 
   isSaving = true;
   UI.setLoading('save-btn', true);
+  assemblyScanState.reading('Validating scanned assembly');
 
   try {
     const res = await fetch('/api/machines/motor-assembly/', {
@@ -209,21 +229,40 @@ async function submitLink(event) {
     const data = await res.json();
 
     if (res.ok) {
-      showToast(data.updated ? 'Motor link updated' : 'Motor link saved', 'success');
+      assemblyScanState.accepted(data.updated ? 'Assembly link confirmed' : 'Assembly link saved', 2000);
       resetForm();
       await loadLinks();
     } else {
       const errors = Array.isArray(data.errors) ? data.errors.join('; ') : data.detail;
-      showToast(errors || 'Failed to save motor link', res.status === 409 ? 'warning' : 'error');
+      if (res.status === 409) {
+        assemblyScanState.duplicate(errors || 'This assembly conflicts with an existing link');
+      } else {
+        assemblyScanState.rejected(errors || 'Assembly scan rejected');
+      }
     }
   } catch (err) {
     console.error('Save motor assembly error:', err);
-    showToast('Connection error. Please try again.', 'error');
+    assemblyScanState.rejected('Connection error. Assembly was not saved.');
   } finally {
     isSaving = false;
     UI.setLoading('save-btn', false, '<span class="material-symbols-outlined text-lg">save</span> Save Link');
   }
 }
+
+['motor-serial', 'rotor-serial', 'stator-serial'].forEach(function (id, index, ids) {
+  const input = document.getElementById(id);
+  input.addEventListener('input', function () {
+    if (input.value) assemblyScanState.reading('Reading ' + input.value.trim().toUpperCase());
+    else assemblyScanState.ready();
+  });
+  input.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const next = document.getElementById(ids[index + 1]);
+    if (next) next.focus();
+    else document.getElementById('assembly-form').requestSubmit();
+  });
+});
 
 document.addEventListener('DOMContentLoaded', loadLinks);
 {% endblock %}

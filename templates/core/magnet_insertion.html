@@ -76,6 +76,13 @@
       </div>
     </div>
     <div class="p-5 space-y-4">
+      <div id="magnet-scan-state" role="status" aria-live="polite">
+        <div><span data-scan-icon></span></div>
+        <div>
+          <p data-scan-label class="text-base font-black uppercase tracking-wide"></p>
+          <p data-scan-detail class="mt-0.5 text-sm font-semibold opacity-75"></p>
+        </div>
+      </div>
 
       <!-- Scanned Data Display (read-only, from PLC) -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -198,6 +205,9 @@
 let currentShift = '';
 let lastSavedStackSerial = null;
 let isSaving = false;
+const magnetScanState = new ScanStateMachine('magnet-scan-state', {
+  readyText: 'Waiting for PLC scanner input',
+});
 let manualProcessOverride = false;
 let plcState = {
   connected: false,
@@ -241,11 +251,12 @@ async function saveRecord() {
   const btn = document.getElementById('save-btn');
 
   if (!plcState.stack_serial || !plcState.magnet_serial) {
-    showToast('Waiting for PLC data', 'warning');
+    magnetScanState.ready('Waiting for both PLC scanner codes');
     return;
   }
 
   isSaving = true;
+  magnetScanState.reading('Saving scanned magnet and stack pair');
   btn.disabled = true;
   btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg">progress_activity</span> Saving...';
 
@@ -265,7 +276,13 @@ async function saveRecord() {
     const data = await res.json();
 
     if (res.ok) {
-      showToast(data.duplicate ? 'Record already saved' : 'Record saved successfully', 'success');
+      if (data.duplicate) {
+        magnetScanState.duplicate('This magnet and stack pair was already recorded', 2400);
+      } else if (data.pass_fail === false) {
+        magnetScanState.rejected('Cycle saved with FAIL result', 2400);
+      } else {
+        magnetScanState.accepted('Magnet insertion cycle accepted', 2000);
+      }
       lastSavedStackSerial = plcState.stack_serial;
 
       // Reset PLC display for next cycle
@@ -281,10 +298,11 @@ async function saveRecord() {
       loadRecords();
       loadStats();
     } else {
-      showToast(data.detail || 'Failed to save record', 'error');
+      if (res.status === 409) magnetScanState.duplicate(data.detail || 'Duplicate scan pair');
+      else magnetScanState.rejected(data.detail || 'Scanned pair was rejected');
     }
   } catch (err) {
-    showToast('Connection error. Please try again.', 'error');
+    magnetScanState.rejected('Connection error. Scan was not saved.');
     console.error('Save error:', err);
   }
 
@@ -378,6 +396,15 @@ setInterval(async () => {
           cycle_time: data.cycle_time ?? manualCycleTime,
           pass_fail: data.pass_fail ?? manualResult,
         };
+        if (plcState.stack_serial || plcState.magnet_serial) {
+          magnetScanState.reading(
+            plcState.stack_serial && plcState.magnet_serial
+              ? 'Both codes read; waiting for cycle result'
+              : 'First code read; scan the second code'
+          );
+        } else if (magnetScanState.state === 'reading') {
+          magnetScanState.ready();
+        }
         
         // Auto-save only when PLC provides full cycle data (not stub pass/fail/time).
         if (plcState.cycle_complete

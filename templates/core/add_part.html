@@ -22,12 +22,19 @@
       <h3 class="font-bold text-slate-900">Part Details</h3>
     </div>
     <div class="p-6 space-y-5">
+      <div id="part-scan-state" role="status" aria-live="polite">
+        <div><span data-scan-icon></span></div>
+        <div>
+          <p data-scan-label class="text-base font-black uppercase tracking-wide"></p>
+          <p data-scan-detail class="mt-0.5 text-sm font-semibold opacity-75"></p>
+        </div>
+      </div>
       <!-- Data Input Row -->
       <div class="grid grid-cols-3 gap-5">
         <div class="col-span-2 flex flex-col gap-1.5">
           <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Serial Number <span class="text-red-500">*</span></label>
-          <input id="serial-number" type="text" placeholder="Scan or type full serial..."
-            class="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-base font-mono font-bold text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary/15 outline-none transition-all tracking-widest placeholder:text-slate-400 placeholder:font-normal"
+          <input id="serial-number" type="text" placeholder="SCAN SERIAL NOW" autofocus autocomplete="off"
+            class="w-full h-20 px-5 bg-white border-4 border-primary/40 rounded-2xl text-2xl font-mono font-black text-slate-900 focus:border-primary focus:ring-8 focus:ring-primary/15 outline-none transition-all tracking-[0.12em] placeholder:text-slate-300 placeholder:font-bold"
             oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,16)" />
           <div id="serial-warning" class="hidden items-center gap-1.5 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
             <span class="material-symbols-outlined text-sm">warning</span>
@@ -86,24 +93,31 @@
 {% endblock %}
 
 {% block scripts %}
+const partScanState = new ScanStateMachine('part-scan-state', {
+  readyText: 'Scan a part serial number',
+});
+const partScanInput = document.getElementById('serial-number');
+partScanState.keepFocus(() => partScanInput);
+
 async function savePart() {
   var serial = document.getElementById("serial-number").value.trim();
   var pname = document.getElementById("part-name").value;
   
-  if (serial.length < 8) { showToast("Serial Number must be at least 8 characters", "error"); return; }
-  if (!pname) { showToast("Unrecognized Part Number. Cannot save.", "error"); return; }
+  if (serial.length < 8) { partScanState.rejected('Serial number must be at least 8 characters'); return; }
+  if (!pname) { partScanState.rejected('Unrecognized part number'); return; }
   
   var pn = serial.substring(0, 5);
   var line = serial.substring(5, 7);
   var shift = serial.substring(7, 8);
   
-  if (!/^\d{5}$/.test(pn)) { showToast("Invalid Part Number derived from serial (" + pn + ")", "error"); return; }
-  if (!/^\d{2}$/.test(line)) { showToast("Invalid Line No derived from serial (" + line + ")", "error"); return; }
-  if (!/^[ABCG]$/.test(shift)) { showToast("Invalid Shift derived from serial (" + shift + ") - must be A/B/C/G", "error"); return; }
+  if (!/^\d{5}$/.test(pn)) { partScanState.rejected('Invalid part number in scan'); return; }
+  if (!/^\d{2}$/.test(line)) { partScanState.rejected('Invalid line number in scan'); return; }
+  if (!/^[ABCG]$/.test(shift)) { partScanState.rejected('Invalid shift; expected A, B, C, or G'); return; }
   
   var btn = document.getElementById('save-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="material-symbols-outlined animate-spin">progress_activity</span> Saving...';
+  partScanState.reading('Checking and saving ' + serial);
   
   try {
     var res = await fetch("/api/add-part", {
@@ -119,19 +133,25 @@ async function savePart() {
     });
     
     if (res.ok) {
-        showToast("Part successfully saved", "success");
+        partScanState.accepted('Part ' + serial + ' saved', 1800);
         document.getElementById("serial-number").value = "";
         document.getElementById("part-name").value = "";
         loadParts();
     } else {
         var data = await res.json();
-        showToast(data.detail || "Error saving part", "error");
+        var detail = data.detail || 'Error saving part';
+        if (res.status === 409 || /already exists|duplicate/i.test(detail)) {
+          partScanState.duplicate(detail);
+        } else {
+          partScanState.rejected(detail);
+        }
     }
   } catch(e) {
-    showToast("Network error", "error");
+    partScanState.rejected('Connection error. Scan was not saved.');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<span class="material-symbols-outlined text-lg">save</span> Save Part';
+    partScanInput.focus({ preventScroll: true });
   }
 }
 
@@ -177,6 +197,8 @@ document.getElementById('serial-number').addEventListener('input', async functio
   var hiddenInput = document.getElementById('part-name');
   var warning = document.getElementById('serial-warning');
   var btn = document.getElementById('save-btn');
+  if (val) partScanState.reading('Reading ' + val);
+  else partScanState.ready();
 
   // Reset serial warning on each keystroke
   warning.classList.add('hidden');
@@ -223,6 +245,7 @@ document.getElementById('serial-number').addEventListener('input', async functio
             warning.classList.add('flex');
             btn.disabled = true;
             btn.classList.add('opacity-50', 'cursor-not-allowed');
+            partScanState.duplicate('Serial ' + val + ' is already registered');
           }
         }
       } catch (err) { /* silently ignore */ }
@@ -233,6 +256,13 @@ document.getElementById('serial-number').addEventListener('input', async functio
     display.className = 'w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-400 flex items-center transition-colors';
     delete display.dataset.lastPn;
     hiddenInput.value = '';
+  }
+});
+
+partScanInput.addEventListener('keydown', function (event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    savePart();
   }
 });
 
