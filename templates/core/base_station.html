@@ -1,0 +1,60 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block body_class %}station-mode{% endblock %}
+
+{% block head %}
+{{ block.super }}
+<style>
+.station-mode .station-page-header,
+.station-mode .station-page-secondary {
+  display: none !important;
+}
+
+.station-mode .station-page {
+  max-width: 96rem;
+  padding: 1.5rem;
+}
+</style>
+{% endblock %}
+
+{% block app_header %}
+<header class="flex min-h-20 w-full shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 z-30 shadow-sm">
+  <div class="flex min-w-0 items-center gap-4">
+    <img src="{% static 'images/ncs_logo.png' %}" alt="NCS Logo" class="h-10 shrink-0 object-contain">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-primary">precision_manufacturing</span>
+        <h1 class="truncate text-lg font-extrabold text-slate-900">{{ station_name }}</h1>
+        <span class="rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-white">Station locked</span>
+      </div>
+      <p class="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-500">
+        <span class="material-symbols-outlined text-base text-primary">assignment</span>
+        <span class="font-bold text-slate-700">Current job:</span>
+        <span class="truncate">{{ current_job }}</span>
+      </p>
+    </div>
+  </div>
+  <div class="flex shrink-0 items-center gap-4">
+    <div class="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs font-bold text-slate-600">
+      <span class="h-2 w-2 rounded-full bg-green-500 status-pulse"></span>
+      <span id="live-clock">--:--:--</span>
+    </div>
+    <button onclick="handleLogout()" aria-label="Sign out"
+      class="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-600">
+      <span class="material-symbols-outlined text-lg">logout</span>
+      Sign out
+    </button>
+  </div>
+</header>
+{% endblock %}
+
+{% block sidebar %}{% endblock %}
+
+{% block page_content %}
+<main class="relative z-10 w-full flex-1 overflow-y-auto bg-transparent" aria-label="{{ station_name }} operator screen">
+  <div class="h-full w-full animate-fade-in-up">
+    {% block content %}{% endblock %}
+  </div>
+</main>
+{% endblock %}

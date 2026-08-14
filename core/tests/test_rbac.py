@@ -24,6 +24,47 @@ class RoleBasedAccessTests(TestCase):
         self.assertEqual(denied.status_code, 302)
         self.assertEqual(denied['Location'], '/rotor-balancing')
 
+    def test_operator_station_page_uses_locked_station_layout(self):
+        user = self.make_user('operator', 'rotor_balancing')
+        self.client.force_login(user)
+
+        response = self.client.get('/rotor-balancing')
+
+        self.assertTrue(response.context['is_station_mode'])
+        self.assertEqual(response.context['base_template'], 'core/base_station.html')
+        self.assertContains(response, 'Rotor Balancing')
+        self.assertContains(response, 'Current job:')
+        self.assertContains(response, 'Station locked')
+        self.assertNotContains(response, '<aside')
+        self.assertNotContains(response, 'Machines Overview')
+
+    def test_supervisor_station_page_keeps_full_navigation(self):
+        user = self.make_user('supervisor')
+        self.client.force_login(user)
+
+        response = self.client.get('/rotor-balancing')
+
+        self.assertFalse(response.context['is_station_mode'])
+        self.assertEqual(response.context['base_template'], 'core/base.html')
+        self.assertContains(response, '<aside')
+        self.assertContains(response, 'Machines Overview')
+
+    def test_station_terminal_session_flag_enables_locked_layout(self):
+        user = self.make_user('supervisor')
+        self.client.force_login(user)
+        session = self.client.session
+        session['station_terminal'] = True
+        session['station'] = 'stator_testing'
+        session['current_job'] = 'Job WO-1042'
+        session.save()
+
+        response = self.client.get('/stator-testing')
+
+        self.assertTrue(response.context['is_station_mode'])
+        self.assertContains(response, 'Stator Testing')
+        self.assertContains(response, 'Job WO-1042')
+        self.assertNotContains(response, '<aside')
+
     def test_operator_station_api_is_scoped(self):
         user = self.make_user('operator', 'rotor_balancing')
         RotorBalancing.objects.create(serial_number='R001', result='Pass')

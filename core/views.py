@@ -48,6 +48,7 @@ from .models import (
     normalize_part_type,
 )
 from .rbac import (
+    STATION_CHOICES,
     allowed_pages,
     api_access_required,
     can_access_action,
@@ -173,10 +174,23 @@ def _request_part_type(data, field, *, label):
 def _render_page(request, template_name, active_page):
     get_token(request)
     user = _user_ctx(request.user)
+    is_station_mode = getattr(request, 'is_station_mode', False)
+    station_names = dict(STATION_CHOICES)
+    station_jobs = {
+        'laser_marking': 'Generate and mark production serials',
+        'rotor_balancing': 'Balance and verify rotor assemblies',
+        'stator_testing': 'Test and verify stator assemblies',
+        'magnet_insertion': 'Monitor and record magnet insertion',
+    }
+    station = user['station'] or request.session.get('station', '')
     return render(request, f'core/{template_name}', {
         'user': user,
         'active_page': active_page,
         'allowed_pages': allowed_pages(request.user),
+        'is_station_mode': is_station_mode,
+        'base_template': 'core/base_station.html' if is_station_mode else 'core/base.html',
+        'station_name': station_names.get(station, station.replace('_', ' ').title()) or 'Station Terminal',
+        'current_job': request.session.get('current_job') or station_jobs.get(station, 'Production operation'),
     })
 
 # ── Page Views ────────────────────────────────────────────────────────────────

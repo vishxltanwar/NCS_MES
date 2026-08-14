@@ -104,10 +104,11 @@
   {% block head %}{% endblock %}
 </head>
 
-<body class="bg-slate-50 font-display text-slate-900 antialiased overflow-hidden mesh-bg">
+<body class="bg-slate-50 font-display text-slate-900 antialiased overflow-hidden mesh-bg {% block body_class %}{% endblock %}">
   <div class="flex h-screen w-full flex-col backdrop-blur-[2px]">
 
     <!-- HEADER -->
+    {% block app_header %}
     <header
       class="flex h-14 w-full shrink-0 items-center justify-between border-b border-white/60 bg-white/70 backdrop-blur-xl px-6 z-30 shadow-[0_1px_12px_rgba(0,0,0,0.02)]">
       <div class="flex items-center gap-6">
@@ -143,9 +144,11 @@
         </button>
       </div>
     </header>
+    {% endblock %}
 
     <div class="flex flex-1 overflow-hidden relative">
       <!-- SIDEBAR -->
+      {% block sidebar %}
       <aside
         class="flex w-56 shrink-0 flex-col border-r border-white/60 bg-white/60 backdrop-blur-xl z-20 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         <nav class="flex flex-col flex-1 py-5 overflow-y-auto">
@@ -205,13 +208,16 @@
           </div>
         </div>
       </aside>
+      {% endblock %}
 
       <!-- PAGE CONTENT -->
+      {% block page_content %}
       <main class="flex-1 overflow-y-auto bg-transparent relative z-10 w-full">
         <div class="h-full w-full animate-fade-in-up px-0 py-0">
           {% block content %}{% endblock %}
         </div>
       </main>
+      {% endblock %}
     </div>
   </div>
 

@@ -1,4 +1,4 @@
-{% extends "core/base.html" %}
+{% extends base_template %}
 {% block title %}Laser Marking Station | NAPINO CONTROL SYSTEMS{% endblock %}
 
 {% block extra_style %}
@@ -8,10 +8,10 @@
 {% endblock %}
 
 {% block content %}
-<div class="max-w-[1400px] mx-auto px-8 py-6 space-y-5">
+<div class="station-page max-w-[1400px] mx-auto px-8 py-6 space-y-5">
 
   <!-- Header -->
-  <div class="flex items-center justify-between">
+  <div class="station-page-header flex items-center justify-between">
     <div>
       <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
         <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
@@ -33,7 +33,7 @@
   </div>
 
   <!-- KPI Row -->
-  <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
+  <div class="station-page-secondary grid grid-cols-2 xl:grid-cols-4 gap-4">
     <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Marked Today</p>
       <h3 class="text-2xl font-bold text-slate-900" id="kpi-today">—</h3>
@@ -146,7 +146,7 @@
       </div>
 
       <!-- Today's Serial Log Table -->
-      <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="station-page-secondary rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <div class="flex items-center gap-2">
             <h3 class="font-bold text-sm text-slate-900 uppercase tracking-tight">Today's Serial Log</h3>
@@ -181,7 +181,7 @@
     </div>
 
     <!-- Right: Visualizer + Log -->
-    <div class="space-y-5">
+    <div class="station-page-secondary space-y-5">
 
       <!-- Laser Visualizer -->
       <div class="rounded-xl border border-slate-200 bg-slate-950 shadow-sm overflow-hidden">

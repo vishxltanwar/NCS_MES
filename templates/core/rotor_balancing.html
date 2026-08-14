@@ -1,12 +1,12 @@
-{% extends "core/base.html" %}
+{% extends base_template %}
 {% block title %}Rotor Balancing | NAPINO CONTROL SYSTEMS{% endblock %}
 
 {% block content %}
-<div class="max-w-[1400px] mx-auto px-8 py-6 space-y-5">
+<div class="station-page max-w-[1400px] mx-auto px-8 py-6 space-y-5">
 
   <!-- Header -->
-  <div class="flex items-center justify-between">
-    <div>
+  <div class="flex items-center justify-end">
+    <div class="station-page-secondary mr-auto">
       <nav class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
         <a href="/dashboard" class="hover:text-primary transition-colors">Overview</a>
         <span class="material-symbols-outlined text-sm">chevron_right</span>
@@ -16,7 +16,7 @@
       <p class="text-sm text-slate-500 mt-0.5">Excel Data Import • Pass/Fail tracking</p>
     </div>
     <div class="flex items-center gap-3">
-      <div class="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-lg">
+      <div class="station-page-secondary flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-lg">
         <div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
         <span class="text-xs font-bold text-green-700 uppercase tracking-wider">System Online</span>
       </div>
@@ -31,7 +31,7 @@
   </div>
 
   <!-- KPI Row -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+  <div class="station-page-secondary grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
     <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex items-center justify-between">
       <div>
         <p class="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Total Records</p>
