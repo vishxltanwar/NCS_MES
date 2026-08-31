@@ -131,7 +131,7 @@ return;
 tbody.innerHTML = serials.map((s, i) => {
 const encodedSerial = encodeURIComponent(s.serial_number || '').replace(/'/g, '%27');
 return `
-<tr class="hover:bg-slate-50 transition-colors cursor-pointer" onclick="searchSerialStr(decodeURIComponent('${encodedSerial}'))">
+<tr class="hover:bg-slate-50 transition-colors cursor-pointer traceability-row" data-serial="${encodedSerial}">
   <td class="px-6 py-3 text-slate-400 font-medium">${s.id}</td>
   <td class="px-6 py-3"><span class="font-mono font-bold text-primary">${escapeHtml(s.serial_number)}</span></td>
   <td class="px-6 py-3"><span class="px-2 py-0.5 bg-slate-100 rounded text-xs font-bold">${escapeHtml(s.part_number)}</span></td>
@@ -154,6 +154,16 @@ return `
 `
 }).join('');
 }
+
+// Event delegation for traceability rows
+document.addEventListener('click', function(e) {
+  var row = e.target.closest('.traceability-row');
+  if (row) {
+    var encodedSerial = row.dataset.serial;
+    var decodedSerial = decodeURIComponent(encodedSerial);
+    searchSerialStr(decodedSerial);
+  }
+});
 
 async function searchSerialStr(sn) {
   document.getElementById('trace-input').value = cleanScanData(sn);

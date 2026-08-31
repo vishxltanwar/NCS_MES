@@ -63,12 +63,12 @@ class Serial(models.Model):
     ]
 
     serial_number = models.CharField(max_length=32, unique=True, db_index=True)
-    part_number   = models.CharField(max_length=10, default='')
-    line_no       = models.CharField(max_length=4, default='')
-    shift         = models.CharField(max_length=2, default='')
-    part_type     = models.CharField(max_length=20, choices=PART_TYPE_CHOICES)
-    created_at    = models.DateTimeField(auto_now_add=True)
-    status        = models.CharField(max_length=20, default='Pending')
+    part_number   = models.CharField(max_length=10, default='', db_index=True)
+    line_no       = models.CharField(max_length=4, default='', db_index=True)
+    shift         = models.CharField(max_length=2, default='', db_index=True)
+    part_type     = models.CharField(max_length=20, choices=PART_TYPE_CHOICES, db_index=True)
+    created_at    = models.DateTimeField(auto_now_add=True, db_index=True)
+    status        = models.CharField(max_length=20, default='Pending', db_index=True)
     laser_delivery_status = models.CharField(
         max_length=12,
         choices=LASER_DELIVERY_CHOICES,
@@ -86,6 +86,11 @@ class Serial(models.Model):
     class Meta:
         db_table = 'serials'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['-created_at', 'part_type'], name='serial_created_part_idx'),
+            models.Index(fields=['part_type', '-created_at'], name='serial_part_created_idx'),
+            models.Index(fields=['status', '-created_at'], name='serial_status_created_idx'),
+        ]
         constraints = [
             models.UniqueConstraint(Lower('serial_number'), name='serial_number_ci_unique'),
             models.CheckConstraint(
@@ -160,9 +165,9 @@ class Part(models.Model):
 class RotorBalancing(models.Model):
     serial_number = models.CharField(max_length=32, db_index=True)
     attempt_no    = models.IntegerField(default=1, db_index=True)
-    result        = models.CharField(max_length=10, choices=[('Pass', 'Pass'), ('Fail', 'Fail')])
+    result        = models.CharField(max_length=10, choices=[('Pass', 'Pass'), ('Fail', 'Fail')], db_index=True)
     rotor_type    = models.CharField(max_length=100, null=True, blank=True)
-    recorded_at   = models.DateTimeField(null=True, blank=True)
+    recorded_at   = models.DateTimeField(null=True, blank=True, db_index=True)
     measure_run   = models.IntegerField(null=True, blank=True)
     balancing_run = models.IntegerField(null=True, blank=True)
     rpm           = models.IntegerField(null=True, blank=True)
@@ -170,13 +175,15 @@ class RotorBalancing(models.Model):
     plane1_degree = models.FloatField(null=True, blank=True)
     plane2_weight = models.FloatField(null=True, blank=True)
     plane2_degree = models.FloatField(null=True, blank=True)
-    imported_at   = models.DateTimeField(auto_now_add=True)
+    imported_at   = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
         db_table = 'rotor_balancing'
         ordering = ['-imported_at']
         indexes = [
             models.Index(fields=['serial_number', 'attempt_no']),
+            models.Index(fields=['-imported_at', 'result'], name='rotor_imported_result_idx'),
+            models.Index(fields=['-recorded_at'], name='rotor_recorded_at_idx'),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -199,8 +206,8 @@ class RotorBalancing(models.Model):
 
 class StatorTestingRecord(models.Model):
     serial_number = models.CharField(max_length=32, db_index=True)
-    recorded_at = models.DateTimeField(null=True, blank=True)
-    final_result = models.CharField(max_length=20)
+    recorded_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    final_result = models.CharField(max_length=20, db_index=True)
     
     # Meta
     operator = models.CharField(max_length=100, null=True, blank=True)
@@ -245,6 +252,10 @@ class StatorTestingRecord(models.Model):
     class Meta:
         db_table = 'stator_testing'
         ordering = ['-imported_at']
+        indexes = [
+            models.Index(fields=['-imported_at', 'final_result'], name='stator_imported_result_idx'),
+            models.Index(fields=['-recorded_at'], name='stator_recorded_at_idx'),
+        ]
     def save(self, *args, **kwargs):
         self.serial_number = _normalize_identifier(self.serial_number)
         super().save(*args, **kwargs)
@@ -314,3 +325,41 @@ class MagnetInsertion(models.Model):
     def __str__(self):
         result = 'PASS' if self.pass_fail else 'FAIL'
         return f"{self.stack_serial} - {result}"
+
+
+# ── Audit Log ────────────────────────────────────────────────────────────────
+# NOTE: AuditLog is defined here so Django can discover it via `get_models()`.
+#       All fields are defined in core/audit.py — see that file for details.
+class AuditLog(models.Model):
+    """Records every mutation (create/update/delete) on MES production data."""
+
+    class AuditAction(models.TextChoices):
+        CREATE = 'CREATE', 'Create'
+        UPDATE = 'UPDATE', 'Update'
+        DELETE = 'DELETE', 'Delete'
+        IMPORT = 'IMPORT', 'Bulk Import'
+
+    timestamp   = models.DateTimeField(auto_now_add=True, db_index=True)
+    user        = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_logs')
+    username    = models.CharField(max_length=150, blank=True, default='')
+    action      = models.CharField(max_length=10, choices=AuditAction.choices, db_index=True)
+    model_name  = models.CharField(max_length=100, db_index=True)
+    object_pk   = models.CharField(max_length=32, db_index=True, blank=True, default='')
+    object_repr = models.CharField(max_length=255, blank=True, default='')
+    changes     = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'audit_logs'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp', 'model_name'], name='audit_ts_model_idx'),
+            models.Index(fields=['model_name', '-timestamp'], name='audit_model_ts_idx'),
+            models.Index(fields=['username', '-timestamp'], name='audit_user_ts_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.timestamp:%Y-%m-%d %H:%M} | {self.username} | {self.action} {self.model_name}({self.object_repr})"
+
+
+# ── Connect signals (import side-effects) ───────────────────────────────────
+from . import signals  # noqa: E402, F401

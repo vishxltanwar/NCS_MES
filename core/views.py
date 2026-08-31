@@ -57,6 +57,7 @@ from .rbac import (
     user_role,
     user_station,
 )
+from .pagination import paginate_queryset
 
 logger = logging.getLogger(__name__)
 
@@ -1170,9 +1171,10 @@ def api_add_part(request):
 @api_view(['GET'])
 @api_access_required('parts_read')
 def api_parts(request):
-    parts = Part.objects.all()
+    parts = Part.objects.all().order_by('-created_at')
+    items, meta = paginate_queryset(parts, request, default_page_size=50, max_page_size=200)
     data = []
-    for p in parts:
+    for p in items:
         data.append({
             'id': p.id,
             'serial_number': p.serial_number or '',
@@ -1183,7 +1185,7 @@ def api_parts(request):
             'added_by': p.added_by,
             'created_at': p.created_at.astimezone(IST).isoformat() if p.created_at else '—',
         })
-    return Response(data)
+    return Response({'results': data, **meta})
 
 
 @api_view(['DELETE'])
@@ -1570,7 +1572,11 @@ def api_rotor_balancing_list(request):
     ).filter(
         serial_rank=1,
     ).order_by('-recorded_at', '-imported_at')
-    return Response([_rotor_balancing_payload(r) for r in records])
+    items, meta = paginate_queryset(records, request, default_page_size=50, max_page_size=200)
+    return Response({
+        'results': [_rotor_balancing_payload(r) for r in items],
+        **meta,
+    })
 
 
 @api_view(['GET'])
@@ -1835,8 +1841,12 @@ def api_stator_testing_import(request):
 @api_view(['GET'])
 @api_access_required('stator_read')
 def api_stator_testing_list(request):
-    records = StatorTestingRecord.objects.all().order_by('-imported_at')[:200]
-    return Response([_stator_testing_payload(r) for r in records])
+    records = StatorTestingRecord.objects.all().order_by('-imported_at')
+    items, meta = paginate_queryset(records, request, default_page_size=50, max_page_size=200)
+    return Response({
+        'results': [_stator_testing_payload(r) for r in items],
+        **meta,
+    })
 
 
 @api_view(['GET'])
@@ -1970,7 +1980,11 @@ def api_motor_assembly(request):
                 | models.Q(rotor_serial__icontains=search)
                 | models.Q(stator_serial__icontains=search)
             )
-        return Response([_motor_assembly_payload(r) for r in records[:200]])
+        items, meta = paginate_queryset(records, request, default_page_size=50, max_page_size=200)
+        return Response({
+            'results': [_motor_assembly_payload(r) for r in items],
+            **meta,
+        })
 
     try:
         motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
@@ -2008,41 +2022,57 @@ def api_motor_assembly(request):
     rotor_serial = rotor.serial_number
     stator_serial = stator.serial_number
 
-    rotor_conflict = MotorAssembly.objects.filter(
-        rotor_serial__iexact=rotor_serial
-    ).exclude(motor_serial__iexact=motor_serial).first()
-    if rotor_conflict:
-        return Response({
-            'detail': 'Rotor Sr No is already linked to a different motor',
-            'conflict': _motor_assembly_payload(rotor_conflict),
-        }, status=409)
-
-    stator_conflict = MotorAssembly.objects.filter(
-        stator_serial__iexact=stator_serial
-    ).exclude(motor_serial__iexact=motor_serial).first()
-    if stator_conflict:
-        return Response({
-            'detail': 'Stator Sr No is already linked to a different motor',
-            'conflict': _motor_assembly_payload(stator_conflict),
-        }, status=409)
-
-    existing = MotorAssembly.objects.filter(motor_serial__iexact=motor_serial).first()
-    if existing:
-        same_rotor = existing.rotor_serial.lower() == rotor_serial.lower()
-        same_stator = existing.stator_serial.lower() == stator_serial.lower()
-        if not same_rotor or not same_stator:
-            return Response({
-                'detail': 'Motor Sr No is already linked to a different rotor/stator. Re-linking is blocked.',
-                'conflict': _motor_assembly_payload(existing),
-            }, status=409)
-        existing.motor_serial = motor_serial
-        existing.rotor_serial = rotor_serial
-        existing.stator_serial = stator_serial
-        existing.save()
-        return Response({**_motor_assembly_payload(existing), 'updated': True})
-
+    # Wrap the conflict check + create in a single atomic transaction with
+    # row-level locks so concurrent requests for the same serials can't
+    # create inconsistent state.
     try:
         with transaction.atomic():
+            rotor_conflict = (
+                MotorAssembly.objects
+                .select_for_update()
+                .filter(rotor_serial__iexact=rotor_serial)
+                .exclude(motor_serial__iexact=motor_serial)
+                .first()
+            )
+            if rotor_conflict:
+                return Response({
+                    'detail': 'Rotor Sr No is already linked to a different motor',
+                    'conflict': _motor_assembly_payload(rotor_conflict),
+                }, status=409)
+
+            stator_conflict = (
+                MotorAssembly.objects
+                .select_for_update()
+                .filter(stator_serial__iexact=stator_serial)
+                .exclude(motor_serial__iexact=motor_serial)
+                .first()
+            )
+            if stator_conflict:
+                return Response({
+                    'detail': 'Stator Sr No is already linked to a different motor',
+                    'conflict': _motor_assembly_payload(stator_conflict),
+                }, status=409)
+
+            existing = (
+                MotorAssembly.objects
+                .select_for_update()
+                .filter(motor_serial__iexact=motor_serial)
+                .first()
+            )
+            if existing:
+                same_rotor = existing.rotor_serial.lower() == rotor_serial.lower()
+                same_stator = existing.stator_serial.lower() == stator_serial.lower()
+                if not same_rotor or not same_stator:
+                    return Response({
+                        'detail': 'Motor Sr No is already linked to a different rotor/stator. Re-linking is blocked.',
+                        'conflict': _motor_assembly_payload(existing),
+                    }, status=409)
+                existing.motor_serial = motor_serial
+                existing.rotor_serial = rotor_serial
+                existing.stator_serial = stator_serial
+                existing.save()
+                return Response({**_motor_assembly_payload(existing), 'updated': True})
+
             record = MotorAssembly.objects.create(
                 motor_serial=motor_serial,
                 rotor_serial=rotor_serial,
@@ -2059,9 +2089,10 @@ def api_motor_assembly(request):
 @api_view(['GET'])
 @api_access_required('magnet_read')
 def api_magnet_insertion_list(request):
-    records = MagnetInsertion.objects.all().order_by('-timestamp')[:200]
+    records = MagnetInsertion.objects.all().order_by('-timestamp')
+    items, meta = paginate_queryset(records, request, default_page_size=50, max_page_size=200)
     data = []
-    for r in records:
+    for r in items:
         data.append({
             'id': r.id,
             'stack_serial': r.stack_serial,
@@ -2073,7 +2104,7 @@ def api_magnet_insertion_list(request):
             'operator': r.operator.get_full_name() if r.operator else '',
             'timestamp': r.timestamp.astimezone(IST).isoformat() if r.timestamp else '',
         })
-    return Response(data)
+    return Response({'results': data, **meta})
 
 
 @api_view(['POST'])
@@ -2109,48 +2140,67 @@ def api_magnet_insertion_create(request):
             status=400,
         )
 
-    existing = MagnetInsertion.objects.filter(
-        stack_serial__iexact=stack_serial,
-        magnet_serial__iexact=magnet_serial,
-    ).first()
-    if existing:
-        return Response({
-            'id': existing.id,
-            'stack_serial': existing.stack_serial,
-            'magnet_serial': existing.magnet_serial,
-            'cycle_time': existing.cycle_time,
-            'pass_fail': existing.pass_fail,
-            'result': 'PASS' if existing.pass_fail else 'FAIL',
-            'shift': existing.shift,
-            'operator': existing.operator.get_full_name() if existing.operator else '',
-            'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
-            'duplicate': True,
-        })
-
     # Auto-assign operator from logged-in user
     operator = request.user if request.user.is_authenticated else None
 
+    # Use SELECT ... FOR UPDATE inside a transaction to make the duplicate-check
+    # race-free. Two concurrent requests for the same (stack, magnet) pair
+    # would otherwise both pass the check and both try to insert; the
+    # unique constraint would then reject one with IntegrityError. The lock
+    # serializes the check + create so we always either return the existing
+    # record or create a new one cleanly.
     try:
-        record = MagnetInsertion.objects.create(
-            stack_serial=stack_serial,
-            magnet_serial=magnet_serial,
-            cycle_time=cycle_time,
-            pass_fail=pass_fail,
-            shift=shift,
-            operator=operator,
-        )
-        return Response({
-            'id': record.id,
-            'stack_serial': record.stack_serial,
-            'magnet_serial': record.magnet_serial,
-            'cycle_time': record.cycle_time,
-            'pass_fail': record.pass_fail,
-            'result': 'PASS' if record.pass_fail else 'FAIL',
-            'shift': record.shift,
-            'operator': record.operator.get_full_name() if record.operator else '',
-            'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
-        }, status=201)
+        with transaction.atomic():
+            existing = (
+                MagnetInsertion.objects
+                .select_for_update()
+                .filter(
+                    stack_serial__iexact=stack_serial,
+                    magnet_serial__iexact=magnet_serial,
+                )
+                .first()
+            )
+            if existing:
+                return Response({
+                    'id': existing.id,
+                    'stack_serial': existing.stack_serial,
+                    'magnet_serial': existing.magnet_serial,
+                    'cycle_time': existing.cycle_time,
+                    'pass_fail': existing.pass_fail,
+                    'result': 'PASS' if existing.pass_fail else 'FAIL',
+                    'shift': existing.shift,
+                    'operator': existing.operator.get_full_name() if existing.operator else '',
+                    'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
+                    'duplicate': True,
+                })
+
+            record = MagnetInsertion.objects.create(
+                stack_serial=stack_serial,
+                magnet_serial=magnet_serial,
+                cycle_time=cycle_time,
+                pass_fail=pass_fail,
+                shift=shift,
+                operator=operator,
+            )
     except IntegrityError:
+        # Lost the race against a concurrent insert — surface the conflict cleanly.
+        existing = MagnetInsertion.objects.filter(
+            stack_serial__iexact=stack_serial,
+            magnet_serial__iexact=magnet_serial,
+        ).first()
+        if existing:
+            return Response({
+                'id': existing.id,
+                'stack_serial': existing.stack_serial,
+                'magnet_serial': existing.magnet_serial,
+                'cycle_time': existing.cycle_time,
+                'pass_fail': existing.pass_fail,
+                'result': 'PASS' if existing.pass_fail else 'FAIL',
+                'shift': existing.shift,
+                'operator': existing.operator.get_full_name() if existing.operator else '',
+                'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
+                'duplicate': True,
+            })
         return Response(
             {'detail': 'This stack and magnet serial pair already exists.'},
             status=409,
@@ -2158,6 +2208,18 @@ def api_magnet_insertion_create(request):
     except DatabaseError:
         logger.exception('Could not create magnet insertion record')
         return Response({'detail': 'Could not save magnet insertion record.'}, status=500)
+
+    return Response({
+        'id': record.id,
+        'stack_serial': record.stack_serial,
+        'magnet_serial': record.magnet_serial,
+        'cycle_time': record.cycle_time,
+        'pass_fail': record.pass_fail,
+        'result': 'PASS' if record.pass_fail else 'FAIL',
+        'shift': record.shift,
+        'operator': record.operator.get_full_name() if record.operator else '',
+        'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
+    }, status=201)
 
 
 @api_view(['GET'])

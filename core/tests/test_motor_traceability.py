@@ -270,8 +270,24 @@ class MotorTraceabilityApiTests(TestCase):
         response = self.client.get('/api/rotor-balancing/')
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 205)
-        self.assertEqual(len({row['serial_number'] for row in response.data}), 205)
-        latest_r000 = next(row for row in response.data if row['serial_number'] == 'R000')
+        # Default page size is 50 — the first page should be full.
+        self.assertEqual(len(response.data['results']), 50)
+        self.assertEqual(response.data['count'], 205)
+        self.assertEqual(response.data['total_pages'], 5)
+        # Page through all 205 results and assert each serial appears once.
+        seen_serials = set()
+        latest_r000 = None
+        for page in range(1, response.data['total_pages'] + 1):
+            paged = self.client.get(f'/api/rotor-balancing/?page={page}&page_size=50')
+            self.assertEqual(paged.status_code, 200)
+            for row in paged.data['results']:
+                self.assertNotIn(row['serial_number'], seen_serials,
+                                 f"Serial {row['serial_number']} appeared on more than one page")
+                seen_serials.add(row['serial_number'])
+                if row['serial_number'] == 'R000':
+                    latest_r000 = row
+        self.assertEqual(len(seen_serials), 205)
+        # The page returned the latest attempt for R000.
+        self.assertIsNotNone(latest_r000)
         self.assertEqual(latest_r000['attempt_no'], 2)
         self.assertEqual(latest_r000['result'], 'Pass')

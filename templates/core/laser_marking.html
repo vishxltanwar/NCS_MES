@@ -472,10 +472,11 @@ async function loadSerials() {
     var statusClass = s.status === 'Marked' ? 'text-green-700 bg-green-100' : 'text-amber-700 bg-amber-100';
     var dotClass = s.status === 'Marked' ? 'bg-green-500' : 'bg-amber-500';
     var encodedSerial = encodeURIComponent(s.serial_number || '').replace(/'/g, '%27');
+    var markDoneSerial = encodedSerial; // store encoded, decoded in event handler
     var actionCell = s.laser_delivery_status === 'Failed'
-      ? '<button onclick="retryDelivery(' + s.id + ')" class="text-xs font-bold text-red-600 hover:underline">Retry Delivery</button>'
+      ? '<button data-serial="' + encodedSerial + '" onclick="retryDelivery(' + s.id + ')" class="text-xs font-bold text-red-600 hover:underline">Retry Delivery</button>'
       : s.status !== 'Marked'
-      ? '<button onclick="markDone(decodeURIComponent(\'' + encodedSerial + '\'))" class="text-xs font-bold text-primary hover:underline">Mark Done</button>'
+      ? '<button data-serial="' + encodedSerial + '" class="text-xs font-bold text-primary hover:underline mark-done-btn">Mark Done</button>'
       : '<span class="text-xs text-slate-300">&#8212;</span>';
     var timeCell = (s.created_at && s.created_at !== '--')
       ? new Date(s.created_at).toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' })
@@ -517,6 +518,16 @@ function exportLog() {
   a.click();
   showToast('Log exported', 'success');
 }
+
+// Event delegation for dynamically generated buttons
+document.addEventListener('click', function(e) {
+  if (e.target && e.target.classList.contains('mark-done-btn')) {
+    var encodedSerial = e.target.dataset.serial;
+    // Decode the serial number for the markDone function
+    var decodedSerial = decodeURIComponent(encodedSerial);
+    markDone(decodedSerial);
+  }
+});
 
 updatePreview();
 loadSavedParts();

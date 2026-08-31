@@ -2,6 +2,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from .models import (
+    AuditLog,
     MagnetInsertion,
     MotorAssembly,
     Part,
@@ -98,4 +99,25 @@ class MotorAssemblyAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin):
 admin.site.site_header = "MES administration"
 admin.site.site_title = "MES Admin Portal"
 admin.site.index_title = "Welcome to MES Admin"
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ('timestamp', 'username', 'action', 'model_name', 'object_repr', 'object_pk')
+    list_filter = ('action', 'model_name', 'username')
+    search_fields = ('username', 'object_repr', 'object_pk', 'changes')
+    readonly_fields = ('timestamp', 'user', 'username', 'action', 'model_name', 'object_pk', 'object_repr', 'changes')
+    list_per_page = 100
+    ordering = ('-timestamp',)
+    date_hierarchy = 'timestamp'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        # Allow admin to delete old audit entries if needed
+        return request.user.is_superuser
 
