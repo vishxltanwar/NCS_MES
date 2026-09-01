@@ -47,7 +47,8 @@ const API = {
             const endpoint = type === 'stator' ? 'stator-testing' : `${type}-balancing`;
             const res = await fetch(`/api/${endpoint}/`);
             await requireOk(res, `Unable to load ${type} records`);
-            return await res.json();
+            const data = await res.json();
+            return Array.isArray(data) ? data : data.results;
         } catch (err) {
             console.error(`Error fetching ${type} records:`, err);
             return [];

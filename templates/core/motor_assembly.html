@@ -142,7 +142,8 @@ async function loadLinks() {
   try {
     const res = await fetch('/api/machines/motor-assembly/');
     await requireOk(res, 'Unable to load motor links');
-    allLinks = await res.json();
+    const data = await res.json();
+    allLinks = Array.isArray(data) ? data : data.results;
     renderTable();
   } catch (err) {
     console.error('Error loading motor assembly links:', err);

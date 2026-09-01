@@ -160,7 +160,8 @@ async function loadParts() {
   try {
     var res = await fetch("/api/parts");
     await requireOk(res, 'Unable to load saved parts');
-    var parts = await res.json();
+    var data = await res.json();
+    var parts = Array.isArray(data) ? data : data.results;
     if (parts.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="px-5 py-6 text-center text-slate-400 text-xs">No parts saved yet</td></tr>';
         return;

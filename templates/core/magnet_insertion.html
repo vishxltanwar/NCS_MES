@@ -436,7 +436,8 @@ async function loadRecords() {
     const res = await fetch('/api/magnet-insertion/');
     await requireOk(res, 'Unable to load magnet insertion records');
     const data = await res.json();
-    renderTable(data);
+    const records = Array.isArray(data) ? data : data.results;
+    renderTable(records);
   } catch (err) {
     console.error('Error loading records:', err);
   }

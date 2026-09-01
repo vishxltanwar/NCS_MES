@@ -263,7 +263,8 @@ async function loadSavedParts() {
   try {
     var res = await fetch('/api/parts');
     if (!res.ok) return;
-    var parts = await res.json();
+    var data = await res.json();
+    var parts = Array.isArray(data) ? data : data.results;
     savedPartsData = parts;
     var dl = document.getElementById('saved-parts');
     dl.innerHTML = parts.map(function(p) {
