@@ -168,3 +168,10 @@ cython_debug/
 # Remove these if you want to commit sample data
 *.csv
 *.xlsx
+
+.env
+*.dump
+venv/
+staticfiles/
+__pycache__/
+*.pyc
