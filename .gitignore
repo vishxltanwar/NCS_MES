@@ -168,3 +168,6 @@ cython_debug/
 # Remove these if you want to commit sample data
 *.csv
 *.xlsx
+
+VS extensions
+.vs/
