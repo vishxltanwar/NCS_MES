@@ -171,3 +171,10 @@ cython_debug/
 
 VS extensions
 .vs/
+
+.env
+*.dump
+venv/
+staticfiles/
+__pycache__/
+*.pyc
