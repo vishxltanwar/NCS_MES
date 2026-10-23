@@ -40,6 +40,7 @@ from .models import (
     LoginThrottle,
     MagnetInsertion,
     MotorAssembly,
+    OperationRecord,
     Part,
     PART_TYPES,
     RotorBalancing,
@@ -261,6 +262,36 @@ def magnet_insertion_view(request):
 @page_access_required('motor_assembly')
 def motor_assembly_view(request):
     return _render_page(request, 'motor_assembly.html', 'motor_assembly')
+
+
+@page_access_required('rotor_operations')
+def rotor_operations_view(request):
+    return _render_page(request, 'rotor_operations.html', 'rotor_operations')
+
+
+@page_access_required('stator_op120')
+def stator_op120_view(request):
+    return _render_page(request, 'stator_op120.html', 'stator_op120')
+
+
+@page_access_required('motor_operations')
+def motor_operations_view(request):
+    return _render_page(request, 'motor_operations.html', 'motor_operations')
+
+
+@page_access_required('motor_marking')
+def motor_marking_view(request):
+    return _render_page(request, 'motor_marking.html', 'motor_marking')
+
+
+@page_access_required('final_inspection')
+def final_inspection_view(request):
+    return _render_page(request, 'final_inspection.html', 'final_inspection')
+
+
+@page_access_required('dispatch_release')
+def dispatch_release_view(request):
+    return _render_page(request, 'dispatch_release.html', 'dispatch_release')
 
 
 def _user_ctx(user):
@@ -2252,7 +2283,337 @@ def api_magnet_insertion_delete(request, pk):
     }, status=409)
 
 
-def _decode_modbus_string(registers):
+# ══════════════════════════════════════════════════════════════════════════════
+# OPERATION GATES API
+# ══════════════════════════════════════════════════════════════════════════════
+
+from .rbac import can_access_action
+
+OPERATION_CODES_BY_ENTITY = {
+    'rotor': {
+        'MAGNET_INSERTION', 'YOKE_SHAFT_PRESSING', 'ROTOR_BALANCING',
+        'ROTOR_OP70', 'ROTOR_OP80', 'ROTOR_RELEASE',
+    },
+    'stator': {'STATOR_OP120', 'STATOR_RELEASE'},
+    'motor': {
+        'MOTOR_OP10', 'MOTOR_OP70', 'MOTOR_OP90', 'MOTOR_OP100',
+        'MOTOR_SERIAL_ASSIGN', 'MOTOR_OP120', 'FINAL_INSPECTION', 'DISPATCH_RELEASE',
+    },
+}
+
+PREREQUISITES = {
+    'YOKE_SHAFT_PRESSING': ['MAGNET_INSERTION'],
+    'ROTOR_BALANCING': ['YOKE_SHAFT_PRESSING'],
+    'ROTOR_OP70': ['ROTOR_BALANCING'],
+    'ROTOR_OP80': ['ROTOR_OP70'],
+    'ROTOR_RELEASE': ['ROTOR_OP80'],
+    'STATOR_RELEASE': ['STATOR_OP120'],
+    'MOTOR_OP70': ['MOTOR_OP10'],
+    'MOTOR_OP90': ['MOTOR_OP70'],
+    'MOTOR_OP100': ['MOTOR_OP90'],
+    'MOTOR_SERIAL_ASSIGN': ['MOTOR_OP100'],
+    'MOTOR_OP120': ['MOTOR_SERIAL_ASSIGN'],
+    'FINAL_INSPECTION': ['MOTOR_OP120'],
+    'DISPATCH_RELEASE': ['FINAL_INSPECTION'],
+}
+
+OP_WRITE_ACTION = {
+    'MAGNET_INSERTION': 'magnet_write',
+    'YOKE_SHAFT_PRESSING': 'yoke_shaft_write',
+    'ROTOR_BALANCING': 'rotor_write',
+    'ROTOR_OP70': 'rotor_op70_write',
+    'ROTOR_OP80': 'rotor_op80_write',
+    'ROTOR_RELEASE': 'rotor_release_write',
+    'STATOR_OP120': 'stator_op120_write',
+    'STATOR_RELEASE': 'stator_release_write',
+    'MOTOR_OP10': 'motor_op10_write',
+    'MOTOR_OP70': 'motor_op70_write',
+    'MOTOR_OP90': 'motor_op90_write',
+    'MOTOR_OP100': 'motor_op100_write',
+    'MOTOR_SERIAL_ASSIGN': 'motor_serial_assign_write',
+    'MOTOR_OP120': 'motor_op120_write',
+    'FINAL_INSPECTION': 'final_inspection_write',
+    'DISPATCH_RELEASE': 'dispatch_write',
+}
+
+
+def _completed_ops(entity_type, serial):
+    return set(
+        OperationRecord.objects.filter(
+            entity_type=entity_type,
+            serial_number__iexact=serial,
+            status='Completed',
+        ).values_list('operation_code', flat=True)
+    )
+
+
+def _missing_prereqs(entity_type, serial, operation_code):
+    missing = []
+    for prereq in PREREQUISITES.get(operation_code, []):
+        if prereq not in _completed_ops(entity_type, serial):
+            missing.append(prereq)
+    # Cross-entity checks for motor OP10: rotor + stator released
+    if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+        # serial here is motor assembly id context; rotor/stator passed via data
+        pass
+    return missing
+
+
+@api_view(['GET'])
+def api_operations_list(request):
+    entity_type = request.query_params.get('entity_type', '').strip()
+    serial = request.query_params.get('serial', '').strip()
+    qs = OperationRecord.objects.all()
+    if entity_type:
+        qs = qs.filter(entity_type=entity_type)
+    if serial:
+        qs = qs.filter(serial_number__iexact=serial)
+    items, meta = paginate_queryset(qs, request, default_page_size=50, max_page_size=200)
+    data = []
+    for r in items:
+        data.append({
+            'id': r.id,
+            'entity_type': r.entity_type,
+            'serial_number': r.serial_number,
+            'operation_code': r.operation_code,
+            'status': r.status,
+            'result': r.result,
+            'recorded_at': r.recorded_at.astimezone(IST).isoformat() if r.recorded_at else '',
+            'operator': r.operator.get_full_name() if r.operator else '',
+            'notes': r.notes,
+            'data': r.data,
+            'created_at': r.created_at.astimezone(IST).isoformat() if r.created_at else '',
+        })
+    return Response({'results': data, **meta})
+
+
+@api_view(['GET'])
+def api_operations_by_serial(request, entity_type, serial):
+    serial = serial.strip()
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if not serial:
+        return Response({'detail': 'Serial is required'}, status=400)
+    records = OperationRecord.objects.filter(
+        entity_type=entity_type, serial_number__iexact=serial
+    ).order_by('-created_at')
+    completed = _completed_ops(entity_type, serial)
+    allowed_next = []
+    for code in OPERATION_CODES_BY_ENTITY[entity_type]:
+        if code in completed:
+            continue
+        if not _missing_prereqs(entity_type, serial, code):
+            allowed_next.append(code)
+    return Response({
+        'entity_type': entity_type,
+        'serial_number': serial,
+        'completed': sorted(completed),
+        'allowed_next': allowed_next,
+        'records': [
+            {
+                'id': r.id,
+                'operation_code': r.operation_code,
+                'status': r.status,
+                'result': r.result,
+                'recorded_at': r.recorded_at.astimezone(IST).isoformat() if r.recorded_at else '',
+                'operator': r.operator.get_full_name() if r.operator else '',
+                'notes': r.notes,
+                'data': r.data,
+            } for r in records
+        ],
+    })
+
+
+@api_view(['POST'])
+def api_operation_check_sequence(request):
+    try:
+        entity_type = _request_text(request.data, 'entity_type', max_length=10)
+        serial = _request_text(request.data, 'serial_number', max_length=64, upper=True)
+        operation_code = _request_text(request.data, 'operation_code', max_length=40, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if operation_code not in OPERATION_CODES_BY_ENTITY[entity_type]:
+        return Response({'detail': 'Invalid operation code for entity type'}, status=400)
+    completed = _completed_ops(entity_type, serial)
+    if operation_code in completed:
+        return Response({'allowed': False, 'reason': 'Operation already completed', 'missing': []})
+    missing = _missing_prereqs(entity_type, serial, operation_code)
+    # Cross-entity checks for motor OP10
+    extra_missing = []
+    if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+        rotor_serial = request.data.get('rotor_serial', '')
+        stator_serial = request.data.get('stator_serial', '')
+        if isinstance(rotor_serial, str):
+            rotor_serial = rotor_serial.strip().upper()
+        if isinstance(stator_serial, str):
+            stator_serial = stator_serial.strip().upper()
+        if not rotor_serial or 'ROTOR_RELEASE' not in _completed_ops('rotor', rotor_serial):
+            extra_missing.append('Rotor not released')
+        if not stator_serial or 'STATOR_RELEASE' not in _completed_ops('stator', stator_serial):
+            extra_missing.append('Stator not released')
+    all_missing = missing + extra_missing
+    return Response({'allowed': not all_missing, 'missing': all_missing})
+
+
+@api_view(['POST'])
+def api_operation_record(request):
+    try:
+        entity_type = _request_text(request.data, 'entity_type', max_length=10)
+        serial_number = _request_text(request.data, 'serial_number', label='Serial number', max_length=64, upper=True)
+        operation_code = _request_text(request.data, 'operation_code', label='Operation code', max_length=40, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if operation_code not in OPERATION_CODES_BY_ENTITY[entity_type]:
+        return Response({'detail': 'Invalid operation code for entity type'}, status=400)
+
+    action = OP_WRITE_ACTION.get(operation_code)
+    if not action or not can_access_action(request.user, action):
+        return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+
+    status_val = request.data.get('status', 'Completed')
+    if status_val not in ('Completed', 'Failed'):
+        status_val = 'Completed'
+    result_val = request.data.get('result', '')
+    if not isinstance(result_val, str):
+        result_val = str(result_val)
+    result_val = result_val.strip()[:10]
+    notes = request.data.get('notes', '')
+    if not isinstance(notes, str):
+        notes = str(notes)
+    notes = notes.strip()[:255]
+    data = request.data.get('data', {})
+    if not isinstance(data, dict):
+        data = {}
+
+    # Prereq check (only for completion)
+    if status_val == 'Completed':
+        missing = _missing_prereqs(entity_type, serial_number, operation_code)
+        extra_missing = []
+        if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+            rotor_serial = data.get('rotor_serial') or request.data.get('rotor_serial', '')
+            stator_serial = data.get('stator_serial') or request.data.get('stator_serial', '')
+            if isinstance(rotor_serial, str):
+                rotor_serial = rotor_serial.strip().upper()
+            else:
+                rotor_serial = ''
+            if isinstance(stator_serial, str):
+                stator_serial = stator_serial.strip().upper()
+            else:
+                stator_serial = ''
+            # Require an existing motor assembly link for this (temp) serial
+            link = MotorAssembly.objects.filter(motor_serial__iexact=serial_number).first()
+            if not link:
+                extra_missing.append('Motor assembly link required')
+            else:
+                if not rotor_serial:
+                    rotor_serial = link.rotor_serial
+                if not stator_serial:
+                    stator_serial = link.stator_serial
+            if not rotor_serial or 'ROTOR_RELEASE' not in _completed_ops('rotor', rotor_serial):
+                extra_missing.append('Rotor not released')
+            if not stator_serial or 'STATOR_RELEASE' not in _completed_ops('stator', stator_serial):
+                extra_missing.append('Stator not released')
+            data = {**data, 'rotor_serial': rotor_serial, 'stator_serial': stator_serial}
+        all_missing = missing + extra_missing
+        if all_missing:
+            return Response({'detail': 'Prerequisites not met', 'missing': all_missing}, status=400)
+
+        # Motor serial assignment handling
+        if operation_code == 'MOTOR_SERIAL_ASSIGN':
+            final_serial = data.get('final_motor_serial') or request.data.get('final_motor_serial', '')
+            if not isinstance(final_serial, str) or not final_serial.strip():
+                return Response({'detail': 'final_motor_serial is required'}, status=400)
+            final_serial = final_serial.strip().upper()
+            link = MotorAssembly.objects.filter(motor_serial__iexact=serial_number).first()
+            if not link:
+                return Response({'detail': 'Motor assembly link not found'}, status=404)
+            if link.final_motor_serial:
+                return Response({'detail': 'Motor serial already assigned'}, status=409)
+            if MotorAssembly.objects.filter(final_motor_serial__iexact=final_serial).exists():
+                return Response({'detail': 'Final motor serial already in use'}, status=409)
+            link.final_motor_serial = final_serial
+            link.motor_serial_assigned_at = django_tz.now()
+            link.save(update_fields=['final_motor_serial', 'motor_serial_assigned_at'])
+            data = {**data, 'final_motor_serial': final_serial}
+
+    # Idempotency: if already completed, return existing
+    existing = OperationRecord.objects.filter(
+        entity_type=entity_type,
+        serial_number__iexact=serial_number,
+        operation_code=operation_code,
+        status='Completed',
+    ).first()
+    if existing and status_val == 'Completed':
+        return Response({
+            'id': existing.id,
+            'entity_type': existing.entity_type,
+            'serial_number': existing.serial_number,
+            'operation_code': existing.operation_code,
+            'status': existing.status,
+            'duplicate': True,
+        })
+
+    operator = request.user if request.user.is_authenticated else None
+    record = OperationRecord.objects.create(
+        entity_type=entity_type,
+        serial_number=serial_number,
+        operation_code=operation_code,
+        status=status_val,
+        result=result_val,
+        recorded_at=django_tz.now() if status_val == 'Completed' else None,
+        operator=operator,
+        notes=notes,
+        data=data,
+    )
+    return Response({
+        'id': record.id,
+        'entity_type': record.entity_type,
+        'serial_number': record.serial_number,
+        'operation_code': record.operation_code,
+        'status': record.status,
+        'result': record.result,
+    }, status=201)
+
+
+@api_view(['POST'])
+def api_motor_serial_assign(request, pk):
+    # Convenience endpoint wrapping operation record for motor serial assignment
+    try:
+        link = MotorAssembly.objects.get(pk=pk)
+    except MotorAssembly.DoesNotExist:
+        return Response({'detail': 'Motor assembly not found'}, status=404)
+    if not can_access_action(request.user, 'motor_serial_assign_write'):
+        return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+    final_serial = request.data.get('final_motor_serial', '')
+    if not isinstance(final_serial, str) or not final_serial.strip():
+        return Response({'detail': 'final_motor_serial is required'}, status=400)
+    final_serial = final_serial.strip().upper()
+    if link.final_motor_serial:
+        return Response({'detail': 'Motor serial already assigned'}, status=409)
+    if MotorAssembly.objects.filter(final_motor_serial__iexact=final_serial).exists():
+        return Response({'detail': 'Final motor serial already in use'}, status=409)
+    # Prereq: motor OP100 completed
+    if 'MOTOR_OP100' not in _completed_ops('motor', link.motor_serial):
+        return Response({'detail': 'Prerequisites not met', 'missing': ['MOTOR_OP100']}, status=400)
+    link.final_motor_serial = final_serial
+    link.motor_serial_assigned_at = django_tz.now()
+    link.save(update_fields=['final_motor_serial', 'motor_serial_assigned_at'])
+    OperationRecord.objects.create(
+        entity_type='motor',
+        serial_number=link.motor_serial,
+        operation_code='MOTOR_SERIAL_ASSIGN',
+        status='Completed',
+        result='Pass',
+        recorded_at=django_tz.now(),
+        operator=request.user if request.user.is_authenticated else None,
+        data={'final_motor_serial': final_serial},
+    )
+    return Response({'motor_serial': link.motor_serial, 'final_motor_serial': final_serial}, status=201)
     if not registers: return ""
     b = b''
     for reg in registers:

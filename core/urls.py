@@ -15,9 +15,15 @@ urlpatterns = [
     path('shift-report', views.shift_report_view, name='shift_report'),
     path('production-log', views.production_log_view, name='production_log'),
     path('rotor-balancing', views.rotor_balancing_view, name='rotor_balancing'),
+    path('rotor-operations', views.rotor_operations_view, name='rotor_operations'),
     path('magnet-insertion', views.magnet_insertion_view, name='magnet_insertion'),
     path('stator-testing', views.stator_testing_view, name='stator_testing'),
+    path('stator-op120', views.stator_op120_view, name='stator_op120'),
     path('motor-assembly', views.motor_assembly_view, name='motor_assembly'),
+    path('motor-operations', views.motor_operations_view, name='motor_operations'),
+    path('motor-marking', views.motor_marking_view, name='motor_marking'),
+    path('final-inspection', views.final_inspection_view, name='final_inspection'),
+    path('dispatch-release', views.dispatch_release_view, name='dispatch_release'),
 
     # ── Auth API ──────────────────────────────────────────────────────────────
     path('api/login', views.api_login, name='api_login'),
@@ -66,4 +72,10 @@ urlpatterns = [
     path('api/magnet-insertion/create/', views.api_magnet_insertion_create, name='api_magnet_insertion_create'),
     path('api/magnet-insertion/stats/', views.api_magnet_insertion_stats, name='api_magnet_insertion_stats'),
     path('api/magnet-insertion/<int:pk>/', views.api_magnet_insertion_delete, name='api_magnet_insertion_delete'),
+    # ── Operation Gates API ────────────────────────────────────────────────────
+    path('api/operations/', views.api_operations_list, name='api_operations_list'),
+    path('api/operations/record/', views.api_operation_record, name='api_operation_record'),
+    path('api/operations/by-serial/<str:entity_type>/<str:serial>/', views.api_operations_by_serial, name='api_operations_by_serial'),
+    path('api/operations/check-sequence/', views.api_operation_check_sequence, name='api_operation_check_sequence'),
+    path('api/machines/motor-assembly/<int:pk>/assign-serial/', views.api_motor_serial_assign, name='api_motor_serial_assign'),
 ]

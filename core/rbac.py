@@ -15,6 +15,9 @@ STATION_LASER_MARKING = 'laser_marking'
 STATION_ROTOR_BALANCING = 'rotor_balancing'
 STATION_STATOR_TESTING = 'stator_testing'
 STATION_MAGNET_INSERTION = 'magnet_insertion'
+STATION_MOTOR_ASSEMBLY = 'motor_assembly'
+STATION_FINAL_INSPECTION = 'final_inspection'
+STATION_DISPATCH = 'dispatch'
 
 ROLE_CHOICES = [
     (ROLE_ADMIN, 'Admin'),
@@ -29,6 +32,9 @@ STATION_CHOICES = [
     (STATION_ROTOR_BALANCING, 'Rotor Balancing'),
     (STATION_STATOR_TESTING, 'Stator Testing'),
     (STATION_MAGNET_INSERTION, 'Magnet Insertion'),
+    (STATION_MOTOR_ASSEMBLY, 'Motor Assembly'),
+    (STATION_FINAL_INSPECTION, 'Final Inspection'),
+    (STATION_DISPATCH, 'Dispatch'),
 ]
 
 PAGE_URLS = {
@@ -44,6 +50,12 @@ PAGE_URLS = {
     'magnet_insertion': '/magnet-insertion',
     'stator_testing': '/stator-testing',
     'motor_assembly': '/motor-assembly',
+    'rotor_operations': '/rotor-operations',
+    'stator_op120': '/stator-op120',
+    'motor_operations': '/motor-operations',
+    'motor_marking': '/motor-marking',
+    'final_inspection': '/final-inspection',
+    'dispatch_release': '/dispatch-release',
 }
 
 PAGE_STATIONS = {
@@ -51,6 +63,12 @@ PAGE_STATIONS = {
     'rotor_balancing': STATION_ROTOR_BALANCING,
     'stator_testing': STATION_STATOR_TESTING,
     'magnet_insertion': STATION_MAGNET_INSERTION,
+    'rotor_operations': STATION_ROTOR_BALANCING,
+    'stator_op120': STATION_STATOR_TESTING,
+    'motor_operations': STATION_MOTOR_ASSEMBLY,
+    'motor_marking': STATION_MOTOR_ASSEMBLY,
+    'final_inspection': STATION_FINAL_INSPECTION,
+    'dispatch_release': STATION_DISPATCH,
 }
 
 ADMIN_PAGES = set(PAGE_URLS)
@@ -65,6 +83,13 @@ SUPERVISOR_PAGES = {
     'rotor_balancing',
     'stator_testing',
     'magnet_insertion',
+    'rotor_operations',
+    'stator_op120',
+    'motor_operations',
+    'motor_marking',
+    'final_inspection',
+    'dispatch_release',
+    'motor_assembly',
 }
 VIEWER_PAGES = {
     'dashboard',
@@ -84,6 +109,12 @@ READ_ACTIONS = {
     'stator_read',
     'motor_assembly_read',
     'magnet_read',
+    'rotor_operations_read',
+    'stator_op120_read',
+    'motor_operations_read',
+    'motor_marking_read',
+    'final_inspection_read',
+    'dispatch_read',
 }
 
 VIEWER_READ_ACTIONS = {
@@ -104,6 +135,20 @@ STATION_ACTIONS = {
     'rotor_write': STATION_ROTOR_BALANCING,
     'stator_write': STATION_STATOR_TESTING,
     'magnet_write': STATION_MAGNET_INSERTION,
+    'yoke_shaft_write': STATION_ROTOR_BALANCING,
+    'rotor_op70_write': STATION_ROTOR_BALANCING,
+    'rotor_op80_write': STATION_ROTOR_BALANCING,
+    'rotor_release_write': STATION_ROTOR_BALANCING,
+    'stator_op120_write': STATION_STATOR_TESTING,
+    'stator_release_write': STATION_STATOR_TESTING,
+    'motor_op10_write': STATION_MOTOR_ASSEMBLY,
+    'motor_op70_write': STATION_MOTOR_ASSEMBLY,
+    'motor_op90_write': STATION_MOTOR_ASSEMBLY,
+    'motor_op100_write': STATION_MOTOR_ASSEMBLY,
+    'motor_serial_assign_write': STATION_MOTOR_ASSEMBLY,
+    'motor_op120_write': STATION_MOTOR_ASSEMBLY,
+    'final_inspection_write': STATION_FINAL_INSPECTION,
+    'dispatch_write': STATION_DISPATCH,
 }
 
 READ_ACTION_STATIONS = {
@@ -113,6 +158,12 @@ READ_ACTION_STATIONS = {
     'rotor_read': STATION_ROTOR_BALANCING,
     'stator_read': STATION_STATOR_TESTING,
     'magnet_read': STATION_MAGNET_INSERTION,
+    'rotor_operations_read': STATION_ROTOR_BALANCING,
+    'stator_op120_read': STATION_STATOR_TESTING,
+    'motor_operations_read': STATION_MOTOR_ASSEMBLY,
+    'motor_marking_read': STATION_MOTOR_ASSEMBLY,
+    'final_inspection_read': STATION_FINAL_INSPECTION,
+    'dispatch_read': STATION_DISPATCH,
 }
 
 

@@ -268,6 +268,8 @@ class MotorAssembly(models.Model):
     motor_serial = models.CharField(max_length=32, unique=True, db_index=True)
     rotor_serial = models.CharField(max_length=32, unique=True, db_index=True)
     stator_serial = models.CharField(max_length=32, unique=True, db_index=True)
+    final_motor_serial = models.CharField(max_length=32, null=True, blank=True, db_index=True)
+    motor_serial_assigned_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -325,6 +327,98 @@ class MagnetInsertion(models.Model):
     def __str__(self):
         result = 'PASS' if self.pass_fail else 'FAIL'
         return f"{self.stack_serial} - {result}"
+
+
+# ── Operation Gates (MES process steps) ───────────────────────────────────────
+OPERATION_ENTITY_ROTOR = 'rotor'
+OPERATION_ENTITY_STATOR = 'stator'
+OPERATION_ENTITY_MOTOR = 'motor'
+OPERATION_ENTITY_CHOICES = [
+    (OPERATION_ENTITY_ROTOR, 'Rotor'),
+    (OPERATION_ENTITY_STATOR, 'Stator'),
+    (OPERATION_ENTITY_MOTOR, 'Motor'),
+]
+
+# Rotor operation codes
+OP_MAGNET_INSERTION = 'MAGNET_INSERTION'
+OP_YOKE_SHAFT_PRESSING = 'YOKE_SHAFT_PRESSING'
+OP_ROTOR_BALANCING = 'ROTOR_BALANCING'
+OP_ROTOR_OP70 = 'ROTOR_OP70'
+OP_ROTOR_OP80 = 'ROTOR_OP80'
+OP_ROTOR_RELEASE = 'ROTOR_RELEASE'
+# Stator operation codes
+OP_STATOR_OP120 = 'STATOR_OP120'
+OP_STATOR_RELEASE = 'STATOR_RELEASE'
+# Motor operation codes
+OP_MOTOR_OP10 = 'MOTOR_OP10'
+OP_MOTOR_OP70 = 'MOTOR_OP70'
+OP_MOTOR_OP90 = 'MOTOR_OP90'
+OP_MOTOR_OP100 = 'MOTOR_OP100'
+OP_MOTOR_SERIAL_ASSIGN = 'MOTOR_SERIAL_ASSIGN'
+OP_MOTOR_OP120 = 'MOTOR_OP120'
+OP_FINAL_INSPECTION = 'FINAL_INSPECTION'
+OP_DISPATCH_RELEASE = 'DISPATCH_RELEASE'
+
+OPERATION_CODE_CHOICES = [
+    (OP_MAGNET_INSERTION, 'Magnet insertion'),
+    (OP_YOKE_SHAFT_PRESSING, 'Yoke and shaft pressing'),
+    (OP_ROTOR_BALANCING, 'Rotor balancing'),
+    (OP_ROTOR_OP70, 'OP70 Front plate and bearing assembly'),
+    (OP_ROTOR_OP80, 'OP80 Front plate and rotor assembly'),
+    (OP_ROTOR_RELEASE, 'Rotor release'),
+    (OP_STATOR_OP120, 'OP120 Final stator assembly testing'),
+    (OP_STATOR_RELEASE, 'Stator release'),
+    (OP_MOTOR_OP10, 'OP10 Front lid and stator assembly'),
+    (OP_MOTOR_OP70, 'OP70 Resistance, HV, and IR test'),
+    (OP_MOTOR_OP90, 'OP90 Motor EOL test'),
+    (OP_MOTOR_OP100, 'OP100 4Q EOL test'),
+    (OP_MOTOR_SERIAL_ASSIGN, 'Motor serial assignment'),
+    (OP_MOTOR_OP120, 'OP120 Laser marking and nameplate assembly'),
+    (OP_FINAL_INSPECTION, 'Final inspection'),
+    (OP_DISPATCH_RELEASE, 'Dispatch release'),
+]
+
+OPERATION_STATUS_COMPLETED = 'Completed'
+OPERATION_STATUS_FAILED = 'Failed'
+OPERATION_STATUS_CHOICES = [
+    (OPERATION_STATUS_COMPLETED, 'Completed'),
+    (OPERATION_STATUS_FAILED, 'Failed'),
+]
+
+
+class OperationRecord(models.Model):
+    entity_type = models.CharField(max_length=10, choices=OPERATION_ENTITY_CHOICES, db_index=True)
+    serial_number = models.CharField(max_length=64, db_index=True)
+    operation_code = models.CharField(max_length=40, choices=OPERATION_CODE_CHOICES, db_index=True)
+    status = models.CharField(max_length=12, choices=OPERATION_STATUS_CHOICES, default=OPERATION_STATUS_COMPLETED, db_index=True)
+    result = models.CharField(max_length=10, blank=True, default='', db_index=True)
+    recorded_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    operator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True, default='')
+    data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = 'operation_records'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['entity_type', 'serial_number', '-created_at'], name='op_entity_serial_idx'),
+            models.Index(fields=['operation_code', '-created_at'], name='op_code_created_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['entity_type', 'serial_number', 'operation_code'],
+                condition=models.Q(status='Completed'),
+                name='op_entity_serial_code_completed_unique',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.serial_number = _normalize_identifier(self.serial_number)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.entity_type}:{self.serial_number} {self.operation_code} {self.status}"
 
 
 # ── Audit Log ────────────────────────────────────────────────────────────────
