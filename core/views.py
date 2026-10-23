@@ -269,6 +269,16 @@ def rotor_operations_view(request):
     return _render_page(request, 'rotor_operations.html', 'rotor_operations')
 
 
+@page_access_required('front_plate_bearing_assy')
+def front_plate_bearing_assy_view(request):
+    return _render_page(request, 'front_plate_bearing_assy.html', 'front_plate_bearing_assy')
+
+
+@page_access_required('front_plate_rotor_assy')
+def front_plate_rotor_assy_view(request):
+    return _render_page(request, 'front_plate_rotor_assy.html', 'front_plate_rotor_assy')
+
+
 @page_access_required('stator_op120')
 def stator_op120_view(request):
     return _render_page(request, 'stator_op120.html', 'stator_op120')
