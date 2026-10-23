@@ -174,46 +174,86 @@
               <span class="material-symbols-outlined text-xl">insert_chart</span> Production Log
             </a>{% endif %}
           </div>
-          <p class="px-6 mt-6 mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Machines Overview</p>
+          <p class="px-6 mt-6 mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Production</p>
           <div class="space-y-0.5">
-            {% if allowed_pages.machine_overview %}<a {% if active_page == 'machine_overview' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %}
-              href="/machine-overview">
-              <span class="material-symbols-outlined text-xl">precision_manufacturing</span> Machine Overview
-            </a>{% endif %}
-            {% if allowed_pages.laser %}<a {% if active_page == 'laser' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/laser-marking">
-              <span class="material-symbols-outlined text-xl">highlight</span> Laser Marking
-            </a>{% endif %}
-            {% if allowed_pages.magnet_insertion %}<a {% if active_page == 'magnet_insertion' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/magnet-insertion">
-              <span class="material-symbols-outlined text-xl">widgets</span> Magnet Insertion
-            </a>{% endif %}
-            {% if allowed_pages.rotor_balancing %}<a {% if active_page == 'rotor_balancing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-balancing">
-              <span class="material-symbols-outlined text-xl">balance</span> Rotor Balancing
-            </a>{% endif %}
-            {% if allowed_pages.rotor_operations %}<a {% if active_page == 'rotor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-operations">
-              <span class="material-symbols-outlined text-xl">settings</span> Rotor Operations
-            </a>{% endif %}
-            {% if allowed_pages.stator_testing %}<a {% if active_page == 'stator_testing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-testing">
-              <span class="material-symbols-outlined text-xl">rule</span> Stator Testing
-            </a>{% endif %}
-            {% if allowed_pages.stator_op120 %}<a {% if active_page == 'stator_op120' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-op120">
-              <span class="material-symbols-outlined text-xl">fact_check</span> Stator OP120
-            </a>{% endif %}
-            {% if allowed_pages.motor_assembly %}<a {% if active_page == 'motor_assembly' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-assembly">
-              <span class="material-symbols-outlined text-xl">hub</span> Motor Assembly
-            </a>{% endif %}
-            {% if allowed_pages.motor_operations %}<a {% if active_page == 'motor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-operations">
-              <span class="material-symbols-outlined text-xl">precision_manufacturing</span> Motor Operations
-            </a>{% endif %}
-            {% if allowed_pages.motor_marking %}<a {% if active_page == 'motor_marking' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-marking">
-              <span class="material-symbols-outlined text-xl">label</span> Motor Marking
-            </a>{% endif %}
-            {% if allowed_pages.final_inspection %}<a {% if active_page == 'final_inspection' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/final-inspection">
-              <span class="material-symbols-outlined text-xl">verified</span> Final Inspection
-            </a>{% endif %}
-            {% if allowed_pages.dispatch_release %}<a {% if active_page == 'dispatch_release' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/dispatch-release">
-              <span class="material-symbols-outlined text-xl">local_shipping</span> Dispatch Release
-            </a>{% endif %}
-          </div>
+              <details class="group" {% if active_page in 'magnet_insertion rotor_operations rotor_balancing' %}open{% endif %}>
+                <summary class="nav-link cursor-pointer list-none flex items-center justify-between">
+                  <span class="flex items-center gap-3"><span class="material-symbols-outlined text-xl">settings</span> Rotor Assembly</span>
+                  <span class="material-symbols-outlined text-base transition-transform group-open:rotate-180">expand_more</span>
+                </summary>
+                <div class="space-y-0.5 pl-4">
+                  {% if allowed_pages.magnet_insertion %}<a {% if active_page == 'magnet_insertion' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/magnet-insertion">
+                    <span class="material-symbols-outlined text-xl">widgets</span> Magnet Insertion
+                  </a>{% endif %}
+                  {% if allowed_pages.rotor_operations %}<a {% if active_page == 'rotor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-operations">
+                    <span class="material-symbols-outlined text-xl">settings</span> Stack &amp; Shaft Press
+                  </a>{% endif %}
+                  {% if allowed_pages.rotor_balancing %}<a {% if active_page == 'rotor_balancing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-balancing">
+                    <span class="material-symbols-outlined text-xl">balance</span> Rotor Balancing
+                  </a>{% endif %}
+                  {% if allowed_pages.rotor_operations %}<a {% if active_page == 'rotor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-operations">
+                    <span class="material-symbols-outlined text-xl">settings</span> Other Rotor Processes
+                  </a>{% endif %}
+                </div>
+              </details>
+              <details class="group" {% if active_page in 'stator_testing stator_op120' %}open{% endif %}>
+                <summary class="nav-link cursor-pointer list-none flex items-center justify-between">
+                  <span class="flex items-center gap-3"><span class="material-symbols-outlined text-xl">rule</span> Stator Assembly</span>
+                  <span class="material-symbols-outlined text-base transition-transform group-open:rotate-180">expand_more</span>
+                </summary>
+                <div class="space-y-0.5 pl-4">
+                  {% if allowed_pages.stator_op120 %}<a {% if active_page == 'stator_op120' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-op120">
+                    <span class="material-symbols-outlined text-xl">fact_check</span> Stator Assembly
+                  </a>{% endif %}
+                  <details class="group" {% if active_page in 'stator_testing stator_op120' %}open{% endif %}>
+                    <summary class="nav-link cursor-pointer list-none flex items-center justify-between">
+                      <span class="flex items-center gap-3"><span class="material-symbols-outlined text-xl">rule</span> Stator Testing</span>
+                      <span class="material-symbols-outlined text-base transition-transform group-open:rotate-180">expand_more</span>
+                    </summary>
+                    <div class="space-y-0.5 pl-4">
+                      {% if allowed_pages.stator_testing %}<a {% if active_page == 'stator_testing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-testing">
+                        <span class="material-symbols-outlined text-xl">rule</span> Stator Testing
+                      </a>{% endif %}
+                      {% if allowed_pages.stator_op120 %}<a {% if active_page == 'stator_op120' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/stator-op120">
+                        <span class="material-symbols-outlined text-xl">fact_check</span> Stator OP120
+                      </a>{% endif %}
+                    </div>
+                  </details>
+                </div>
+              </details>
+              <details class="group" {% if active_page in 'motor_assembly motor_operations motor_marking final_inspection dispatch_release' %}open{% endif %}>
+                <summary class="nav-link cursor-pointer list-none flex items-center justify-between">
+                  <span class="flex items-center gap-3"><span class="material-symbols-outlined text-xl">hub</span> Motor Assembly</span>
+                  <span class="material-symbols-outlined text-base transition-transform group-open:rotate-180">expand_more</span>
+                </summary>
+                <div class="space-y-0.5 pl-4">
+                  {% if allowed_pages.motor_assembly %}<a {% if active_page == 'motor_assembly' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-assembly">
+                    <span class="material-symbols-outlined text-xl">hub</span> Rotor &amp; Stator Pressing
+                  </a>{% endif %}
+                  {% if allowed_pages.motor_operations %}<a {% if active_page == 'motor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-operations">
+                    <span class="material-symbols-outlined text-xl">precision_manufacturing</span> EOL Testing
+                  </a>{% endif %}
+                  {% if allowed_pages.motor_operations %}<a {% if active_page == 'motor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-operations">
+                    <span class="material-symbols-outlined text-xl">precision_manufacturing</span> Noise Test
+                  </a>{% endif %}
+                  {% if allowed_pages.motor_operations %}<a {% if active_page == 'motor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-operations">
+                    <span class="material-symbols-outlined text-xl">precision_manufacturing</span> 4Q Testing
+                  </a>{% endif %}
+                  {% if allowed_pages.motor_marking %}<a {% if active_page == 'motor_marking' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-marking">
+                    <span class="material-symbols-outlined text-xl">label</span> Motor Marking
+                  </a>{% endif %}
+                  {% if allowed_pages.final_inspection %}<a {% if active_page == 'final_inspection' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/final-inspection">
+                    <span class="material-symbols-outlined text-xl">verified</span> Final Inspection
+                  </a>{% endif %}
+                  {% if allowed_pages.dispatch_release %}<a {% if active_page == 'dispatch_release' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/dispatch-release">
+                    <span class="material-symbols-outlined text-xl">local_shipping</span> Dispatch Release
+                  </a>{% endif %}
+                </div>
+              </details>
+            </div>
+          {% if allowed_pages.laser %}<a {% if active_page == 'laser' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/laser-marking">
+            <span class="material-symbols-outlined text-xl">highlight</span> Laser Marking
+          </a>{% endif %}          </div>
         </nav>
         <div class="p-4 border-t border-slate-200">
           <div class="rounded-xl bg-white/80 shadow-sm border border-white p-3">
