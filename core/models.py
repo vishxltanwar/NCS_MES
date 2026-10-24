@@ -361,7 +361,7 @@ OP_DISPATCH_RELEASE = 'DISPATCH_RELEASE'
 
 OPERATION_CODE_CHOICES = [
     (OP_MAGNET_INSERTION, 'Magnet insertion'),
-    (OP_YOKE_SHAFT_PRESSING, 'Yoke and shaft pressing'),
+    (OP_YOKE_SHAFT_PRESSING, 'Stack and shaft pressing'),
     (OP_ROTOR_BALANCING, 'Rotor balancing'),
     (OP_ROTOR_OP70, 'OP70 Front plate and bearing assembly'),
     (OP_ROTOR_OP80, 'OP80 Front plate and rotor assembly'),
@@ -455,5 +455,141 @@ class AuditLog(models.Model):
         return f"{self.timestamp:%Y-%m-%d %H:%M} | {self.username} | {self.action} {self.model_name}({self.object_repr})"
 
 
-# ── Connect signals (import side-effects) ───────────────────────────────────
-from . import signals  # noqa: E402, F401
+class FinalInspectionParameter(models.Model):
+    """Master parameter catalogue for the Final Inspection checksheet.
+    Spec limits are editable in the admin UI — never hardcoded in views/JS.
+    """
+
+    SECTION_MECHANICAL = 'Mechanical'
+    SECTION_ENCODER = 'Encoder signals'
+    SECTION_THERMAL = 'Thermal'
+    SECTION_BEMF = 'BEMF'
+    SECTION_THERMISTOR = 'Thermistor'
+    SECTION_RESISTANCE = 'Motor resistance'
+    SECTION_IR_HV = 'IR / HV leakage'
+    SECTION_NOISE = 'Noise dB'
+    SECTION_DIMENSIONS = 'Dimensions'
+    SECTION_FOURQ = '4Q bench'
+    SECTION_FINAL_ASSY_BEMF = 'Final assy BEMF'
+    SECTION_CHOICES = [
+        (SECTION_MECHANICAL, SECTION_MECHANICAL),
+        (SECTION_ENCODER, SECTION_ENCODER),
+        (SECTION_THERMAL, SECTION_THERMAL),
+        (SECTION_BEMF, SECTION_BEMF),
+        (SECTION_THERMISTOR, SECTION_THERMISTOR),
+        (SECTION_RESISTANCE, SECTION_RESISTANCE),
+        (SECTION_IR_HV, SECTION_IR_HV),
+        (SECTION_NOISE, SECTION_NOISE),
+        (SECTION_DIMENSIONS, SECTION_DIMENSIONS),
+        (SECTION_FOURQ, SECTION_FOURQ),
+        (SECTION_FINAL_ASSY_BEMF, SECTION_FINAL_ASSY_BEMF),
+    ]
+    SECTIONS = tuple(value for value, _label in SECTION_CHOICES)
+
+    # Input types supported by the form: text (numeric tolerance strings like "+0.05"),
+    # float (raw value), bool (PASS/FAIL yes/no).
+    INPUT_TEXT = 'Text'
+    INPUT_FLOAT = 'Float'
+    INPUT_BOOL = 'Bool'
+    INPUT_TYPE_CHOICES = [
+        (INPUT_TEXT, 'Text'),
+        (INPUT_FLOAT, 'Float'),
+        (INPUT_BOOL, 'Bool'),
+    ]
+    INPUT_TYPES = tuple(value for value, _label in INPUT_TYPE_CHOICES)
+
+    code          = models.CharField(max_length=32, unique=True, db_index=True)
+    name          = models.CharField(max_length=120)
+    section       = models.CharField(max_length=40, choices=SECTION_CHOICES, db_index=True)
+    unit          = models.CharField(max_length=16, blank=True, default='')
+    spec_min      = models.FloatField(null=True, blank=True)
+    spec_max      = models.FloatField(null=True, blank=True)
+    spec_text     = models.CharField(max_length=255, blank=True, default='')
+    input_type    = models.CharField(max_length=8, choices=INPUT_TYPE_CHOICES, default=INPUT_FLOAT)
+    is_calculated = models.BooleanField(default=False, help_text='Auto-computed fields are read-only')
+    sort_order    = models.PositiveSmallIntegerField(default=0, db_index=True)
+    active        = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        db_table = 'final_inspection_parameters'
+        ordering = ['section', 'sort_order', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['code'], name='final_param_code_unique'),
+        ]
+
+    def __str__(self):
+        return f"{self.code} ({self.name})"
+
+
+class FinalInspection(models.Model):
+    DRAFT = 'Draft'
+    COMPLETED = 'Completed'
+    STATUS_CHOICES = [(DRAFT, DRAFT), (COMPLETED, COMPLETED)]
+
+    motor_serial      = models.CharField(max_length=32, unique=True, db_index=True)
+    enc_no            = models.CharField(max_length=32, blank=True, default='', db_index=True)
+    stator_serial     = models.CharField(max_length=32, db_index=True, blank=True, default='')
+    rotor_serial      = models.CharField(max_length=32, db_index=True, blank=True, default='')
+    magnet_type       = models.CharField(max_length=64, blank=True, default='')
+    pcb_board         = models.CharField(max_length=64, blank=True, default='')
+    inspector         = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='final_inspections')
+    inspected_at      = models.DateTimeField(auto_now_add=True, db_index=True)
+    attempt_no        = models.PositiveIntegerField(default=1, db_index=True)
+    status            = models.CharField(max_length=10, choices=STATUS_CHOICES, default=DRAFT, db_index=True)
+    overall_result    = models.CharField(max_length=10, choices=[('Pass', 'Pass'), ('Fail', 'Fail'), ('NA', 'NA')], default='NA', db_index=True)
+    remarks           = models.CharField(max_length=255, blank=True, default='')
+    completed_at      = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'final_inspections'
+        ordering = ['-inspected_at']
+        indexes = [
+            models.Index(fields=['-inspected_at', 'status'], name='fin_insp_ts_status_idx'),
+            models.Index(fields=['motor_serial', '-inspected_at'], name='fin_insp_motor_ts_idx'),
+            models.Index(fields=['status', '-inspected_at'], name='fin_insp_status_ts_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['motor_serial', 'attempt_no'],
+                name='final_insp_serial_attempt_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(overall_result__in=['Pass', 'Fail', 'NA']),
+                name='final_insp_result_valid',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.motor_serial = _normalize_identifier(self.motor_serial)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.motor_serial} attempt {self.attempt_no} - {self.status}"
+
+
+class FinalInspectionReading(models.Model):
+    HEADER_FINAL_INSPECTION = 'FinalInspection'
+
+    final_inspection = models.ForeignKey(FinalInspection, on_delete=models.CASCADE, related_name='readings')
+    parameter        = models.ForeignKey(FinalInspectionParameter, on_delete=models.CASCADE, related_name='readings')
+    value            = models.CharField(max_length=255, blank=True, default='')
+    result           = models.CharField(max_length=10, choices=[('Pass', 'Pass'), ('Fail', 'Fail'), ('NA', 'NA')], default='NA')
+
+    class Meta:
+        db_table = 'final_inspection_readings'
+        ordering = ['parameter__sort_order', 'id']
+        indexes = [
+            models.Index(fields=['final_inspection', 'parameter'], name='fin_reading_hip_par_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['final_inspection', 'parameter'],
+                name='final_reading_hip_par_unique',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.parameter.code}: {self.value or '—'} ({self.result})"

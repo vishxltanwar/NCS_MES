@@ -151,7 +151,7 @@
       {% block sidebar %}
       <aside
         class="flex w-56 shrink-0 flex-col sticky top-14 h-[calc(100vh-3.5rem)] border-r border-white/60 bg-white/60 backdrop-blur-xl z-20 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-        <nav class="flex flex-col flex-1 min-h-0 py-5 overflow-y-auto">
+        <nav id="sidebar-nav" class="flex flex-col flex-1 min-h-0 py-5 overflow-y-auto">
           <p class="px-6 mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-400">Operations</p>
           <div class="space-y-0.5">
             {% if allowed_pages.dashboard %}<a {% if active_page == 'dashboard' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/dashboard">
@@ -183,7 +183,7 @@
               <span class="material-symbols-outlined text-xl">widgets</span> Magnet Insertion
             </a>{% endif %}
             {% if allowed_pages.rotor_operations %}<a {% if active_page == 'rotor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-operations">
-              <span class="material-symbols-outlined text-xl">settings</span> Stack &amp; Shaft Press
+               <span class="material-symbols-outlined text-xl">settings</span> Stack and Shaft Pressing
             </a>{% endif %}
             {% if allowed_pages.rotor_balancing %}<a {% if active_page == 'rotor_balancing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/rotor-balancing">
               <span class="material-symbols-outlined text-xl">balance</span> Rotor Balancing
@@ -210,24 +210,34 @@
             {% if allowed_pages.motor_assembly %}<a {% if active_page == 'motor_assembly' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-assembly">
               <span class="material-symbols-outlined text-xl">hub</span> Rotor &amp; Stator Pressing
             </a>{% endif %}
-            {% if allowed_pages.motor_operations %}<a {% if active_page == 'motor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-operations">
+            {% if allowed_pages.eol_testing %}<a {% if active_page == 'eol_testing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/eol-testing">
               <span class="material-symbols-outlined text-xl">precision_manufacturing</span> EOL Testing
             </a>{% endif %}
-            {% if allowed_pages.motor_operations %}<a {% if active_page == 'motor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-operations">
-              <span class="material-symbols-outlined text-xl">precision_manufacturing</span> Noise Test
+            {% if allowed_pages.noise %}<a {% if active_page == 'noise' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/noise-test">
+              <span class="material-symbols-outlined text-xl">graphic_eq</span> Noise Test
             </a>{% endif %}
-            {% if allowed_pages.motor_operations %}<a {% if active_page == 'motor_operations' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-operations">
-              <span class="material-symbols-outlined text-xl">precision_manufacturing</span> 4Q Testing
+            {% if allowed_pages.final_testing %}<a {% if active_page == '4q_testing' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/final-testing">
+              <span class="material-symbols-outlined text-xl">verified</span> 4Q Testing
             </a>{% endif %}
-            {% if allowed_pages.motor_marking %}<a {% if active_page == 'motor_marking' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/motor-marking">
-              <span class="material-symbols-outlined text-xl">label</span> Motor Marking
+            {% if allowed_pages.laser_marking_motor %}<a {% if active_page == 'laser_marking_motor' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/laser-marking">
+              <span class="material-symbols-outlined text-xl">qr_code_2</span> Laser Marking
             </a>{% endif %}
+            {% if allowed_pages.pre_delivery_inspection %}<a {% if active_page == 'pre_delivery_inspection' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/pre-delivery-inspection">
+              <span class="material-symbols-outlined text-xl">fact_check</span> Pre Delivery Inspection
+            </a>{% endif %}
+          </div>
+          <p class="px-6 mt-4 mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+            <span class="material-symbols-outlined text-base">verified</span> Quality
+          </p>
+          <div class="space-y-0.5 pl-4">
             {% if allowed_pages.final_inspection %}<a {% if active_page == 'final_inspection' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/final-inspection">
               <span class="material-symbols-outlined text-xl">verified</span> Final Inspection
             </a>{% endif %}
-            {% if allowed_pages.laser %}<a {% if active_page == 'laser' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/laser-marking">
-              <span class="material-symbols-outlined text-xl">highlight</span> Laser Marking
-            </a>{% endif %}
+          </div>
+          <p class="px-6 mt-4 mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+            <span class="material-symbols-outlined text-base">local_shipping</span> SCM
+          </p>
+          <div class="space-y-0.5 pl-4">
             {% if allowed_pages.dispatch_release %}<a {% if active_page == 'dispatch_release' %}class="nav-link active-nav"{% else %}class="nav-link"{% endif %} href="/dispatch-release">
               <span class="material-symbols-outlined text-xl">local_shipping</span> Dispatch Release
             </a>{% endif %}
@@ -349,6 +359,66 @@
       document.getElementById('toast-container').appendChild(el);
       setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 300); }, 3500);
     }
+
+    // ── Scroll preservation ───────────────────────────────────────────────────
+    // The sidebar links cause full-page reloads; without this, every click
+    // jumps back to the top of <main>. We save <main>.scrollTop on unload
+    // and restore it once DOMContentLoaded fires, plus disable the browser's
+    // automatic scroll restoration so it cannot override our intent.
+    (function () {
+      var main = document.querySelector('main');
+      if (!main) return;
+
+      if (history.scrollRestoration !== 'manual') {
+        history.scrollRestoration = 'manual';
+      }
+
+      window.addEventListener('beforeunload', function () {
+        try {
+          sessionStorage.setItem('scrollMainTop', String(main.scrollTop));
+          sessionStorage.setItem('scrollRestoration', 'manual');
+        } catch (e) { /* ignore */ }
+      });
+
+      function restoreScroll() {
+        var saved = sessionStorage.getItem('scrollMainTop');
+        if (saved !== null && saved !== '') {
+          main.scrollTop = parseInt(saved, 10) || 0;
+        }
+      }
+
+      if (main.scrollHeight > main.clientHeight) {
+        window.addEventListener('DOMContentLoaded', restoreScroll);
+        // Safety net: also try after a tiny delay so async-loaded pages
+        // can report their real scrollHeight.
+        setTimeout(restoreScroll, 60);
+      }
+    })();
+
+    // ── Sidebar scroll preservation ───────────────────────────────────────────
+    // Saves the sidebar's scrollTop whenever a nav link is clicked (before the
+    // browser navigates away), then restores it immediately on DOMContentLoaded.
+    // sessionStorage is used so the position survives same-tab page navigations
+    // but is naturally cleared on a true hard refresh (Ctrl+R / F5).
+    (function () {
+      var nav = document.getElementById('sidebar-nav');
+      if (!nav) return;
+
+      // Restore saved position immediately (runs during HTML parse, before paint).
+      var savedNavScroll = sessionStorage.getItem('sidebarNavScrollTop');
+      if (savedNavScroll !== null) {
+        nav.scrollTop = parseInt(savedNavScroll, 10) || 0;
+      }
+
+      // Save position the moment any nav link is clicked, so it's always fresh.
+      nav.addEventListener('click', function (e) {
+        var link = e.target.closest('a.nav-link');
+        if (!link) return;
+        try {
+          sessionStorage.setItem('sidebarNavScrollTop', String(nav.scrollTop));
+        } catch (_) { /* quota / privacy mode */ }
+      });
+    })();
 
     {% block scripts %} {% endblock %}
   </script>

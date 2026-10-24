@@ -53,9 +53,13 @@ PAGE_URLS = {
     'rotor_operations': '/rotor-operations',
     'front_plate_bearing_assy': '/front-plate-bearing-assy',
     'front_plate_rotor_assy': '/front-plate-rotor-assy',
-    'stator_op120': '/stator-op120',
-    'motor_operations': '/motor-operations',
-    'motor_marking': '/motor-marking',
+
+    'eol_testing': '/eol-testing',
+    'noise': '/noise-test',
+    'final_testing': '/final-testing',
+    'laser_marking_motor': '/laser-marking',
+    'pre_delivery_inspection': '/pre-delivery-inspection',
+
     'final_inspection': '/final-inspection',
     'dispatch_release': '/dispatch-release',
 }
@@ -68,9 +72,12 @@ PAGE_STATIONS = {
     'rotor_operations': STATION_ROTOR_BALANCING,
     'front_plate_bearing_assy': STATION_ROTOR_BALANCING,
     'front_plate_rotor_assy': STATION_ROTOR_BALANCING,
-    'stator_op120': STATION_STATOR_TESTING,
-    'motor_operations': STATION_MOTOR_ASSEMBLY,
-    'motor_marking': STATION_MOTOR_ASSEMBLY,
+
+    'eol_testing': STATION_MOTOR_ASSEMBLY,
+    'final_testing': STATION_MOTOR_ASSEMBLY,
+    'laser_marking_motor': STATION_MOTOR_ASSEMBLY,
+    'pre_delivery_inspection': STATION_MOTOR_ASSEMBLY,
+
     'final_inspection': STATION_FINAL_INSPECTION,
     'dispatch_release': STATION_DISPATCH,
 }
@@ -90,9 +97,11 @@ SUPERVISOR_PAGES = {
     'rotor_operations',
     'front_plate_bearing_assy',
     'front_plate_rotor_assy',
-    'stator_op120',
-    'motor_operations',
-    'motor_marking',
+    'eol_testing',
+    'noise',
+    'final_testing',
+    'laser_marking_motor',
+    'pre_delivery_inspection',
     'final_inspection',
     'dispatch_release',
     'motor_assembly',
@@ -117,8 +126,7 @@ READ_ACTIONS = {
     'magnet_read',
     'rotor_operations_read',
     'stator_op120_read',
-    'motor_operations_read',
-    'motor_marking_read',
+    'eol_testing_read',
     'final_inspection_read',
     'dispatch_read',
 }
@@ -166,8 +174,7 @@ READ_ACTION_STATIONS = {
     'magnet_read': STATION_MAGNET_INSERTION,
     'rotor_operations_read': STATION_ROTOR_BALANCING,
     'stator_op120_read': STATION_STATOR_TESTING,
-    'motor_operations_read': STATION_MOTOR_ASSEMBLY,
-    'motor_marking_read': STATION_MOTOR_ASSEMBLY,
+    'eol_testing_read': STATION_MOTOR_ASSEMBLY,
     'final_inspection_read': STATION_FINAL_INSPECTION,
     'dispatch_read': STATION_DISPATCH,
 }

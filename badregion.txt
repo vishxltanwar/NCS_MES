@@ -1,0 +1,56 @@
+3061: "        result = 'Pass'  # No limits defined → pass by default"
+3062: '    return result'
+3063: ''
+3064: ''
+3065: 'def _build_xlsx(inspection):'
+3066: '    """Build an .xlsx workbook matching the original checksheet layout."""'
+3067: '    buffer = BytesIO()'
+3068: '    workbook = openpyxl.Workbook()'
+3069: '    sheet = workbook.active'
+3070: "    sheet.title = 'Final Inspection'"
+3071: ''
+3072: "    headers = ['S.No', 'Motor Sr No', 'Enc No', 'Stator', 'Rotor',"
+3073: "               'Inspector', 'Inspected At', 'Attempt No',"
+3074: "               'Mechanical-Shaft runout (mm)', 'Encoder-Sin min (V)',"
+3075: "               'Encoder-Sin max (V)', 'Encoder-Cos min (V)',"
+3076: "               'Encoder-Cos max (V)', 'Thermal-Shaft temp @7k RPM (C)',"
+3077: "               'Thermal-Coil temp 1 (C)', 'Thermal-Coil temp 2 (C)',"
+3078: "               'Thermal-Body temp (C)', 'Encoder angle (rad)',"
+3079: "               'Encoder angle (deg)', 'BEMF-before (%)',"
+3080: "               'BEMF-hot', 'BEMF-after (cool) (%)',"
+3081: "               'Thermistor-T1 (C)', 'Thermistor-T2 (C)',"
+3082: "               'Motor resistance-R1 (mOhm)', 'Motor resistance-R2 (mOhm)',"
+3083: "               'Motor resistance-R3 (mOhm)',"
+3084: "               'IR (MOhm @1k VDC/60s)', 'HV leakage (mA @1.5k VAC/10s)',"
+3085: "               'Noise-dB @1000 RPM', 'Noise-dB @2000 RPM',"
+3086: "               'Noise-dB @3000 RPM', 'Noise-dB @4000 RPM',"
+3087: "               'Noise-dB @5000 RPM', 'Noise-dB @6000 RPM',"
+3088: "               'Noise-dB @7000 RPM', 'Noise-dB overall (dB)',"
+3089: "               'Magnet height (mm)', 'PCB height (mm)',"
+3090: "               '4Q-loss @500 W (W)', '4Q-loss @5k W (W)',"
+3091: "               '4Q-loss @10k W (W)', 'Efficiency (%)',"
+3092: "               'Peak torque (Nm @500 rpm)', 'BEMF-1k CW UV (V)',"
+3093: "               'BEMF-1k CW VW (V)', 'BEMF-1k CW WU (V)',"
+3094: "               'Vibration (mm/s)', 'Remarks']"
+3095: '    header_rows = ['
+3096: "        ['Section', 'Code', 'Name', 'Unit', 'Spec Text', 'Spec Min', 'Spec Max',"
+3097: "         'Input Type', 'Is Calc', 'Result'],"
+3098: '    ]'
+3099: "    for idx, code in enumerate(['MECHANICAL_SHAFT_RUNOUT', 'ENC_SIN_MIN', 'ENC_SIN_MAX',"
+3100: "                                'ENC_COS_MIN', 'ENC_COS_MAX', 'THERMAL_SHAFT_TEMP',"
+3101: "                                'THERMAL_COIL1', 'THERMAL_COIL2', 'THERMAL_BODY_TEMP',"
+3102: "                                'ENC_ANGLE_RAD', 'ENC_ANGLE_DEG', 'BEMF_BEFORE',"
+3103: "                                'BEMF_HOT', 'BEMF_AFTER', 'THERMISTOR1', 'THERMISTOR2',"
+3104: "                                'RES_R1', 'RES_R2', 'RES_R3', 'IR_MOHM',"
+3105: "                                'HV_MA', 'NOISE_1000', 'NOISE_2000', 'NOISE_3000',"
+3106: "                                'NOISE_4000', 'NOISE_5000', 'NOISE_6000', 'NOISE_7000',"
+3107: "                                'NOISE_OVERALL', 'DIM_MAGNET_HEIGHT', 'DIM_PCB_HEIGHT',"
+3108: "                                'FOURQ_LOSS_500', 'FOURQ_LOSS_5K', 'FOURQ_LOSS_10K',"
+3109: "                                'EFFICIENCY', 'FOURQ_PEAK_TORQUE', 'BEMF_UV', 'BEMF_VW',"
+3110: "                                'BEMF_WU', 'VIBRATION'])"
+3111: "    row_index = header_rows[0].index('S.No') + 1"
+3112: '    src_idx = 0'
+3113: '    for r in inspection.readings.all():'
+3114: '        sheet.append('
+3115: "            [src_idx + 1, inspection.motor_serial, inspection.enc_no or '',"
+3116: "             inspection.stator_serial or '', inspection.rotor_serial or '',"

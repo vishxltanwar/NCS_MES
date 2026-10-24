@@ -24,9 +24,12 @@ import openpyxl
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
-from pymodbus.client import ModbusTcpClient
-import struct
-from django.db import DatabaseError, IntegrityError, models, transaction
+import openpyxl
+import pandas as pd
+from rest_framework import status, serializers
+from .pagination import paginate_queryset
+from django.db.models.functions import RowNumber
+from django.db import transaction
 from django.db.models.functions import Lower, RowNumber
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -37,6 +40,9 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Tabl
 from utils.scanner import clean_scan_data
 from .models import (
     DailySerialCounter,
+    FinalInspection,
+    FinalInspectionParameter,
+    FinalInspectionReading,
     LoginThrottle,
     MagnetInsertion,
     MotorAssembly,
@@ -266,7 +272,7 @@ def motor_assembly_view(request):
 
 @page_access_required('rotor_operations')
 def rotor_operations_view(request):
-    return _render_page(request, 'rotor_operations.html', 'rotor_operations')
+    return _render_page(request, 'stack_and_shaft_pressing.html', 'rotor_operations')
 
 
 @page_access_required('front_plate_bearing_assy')
@@ -279,19 +285,9 @@ def front_plate_rotor_assy_view(request):
     return _render_page(request, 'front_plate_rotor_assy.html', 'front_plate_rotor_assy')
 
 
-@page_access_required('stator_op120')
-def stator_op120_view(request):
-    return _render_page(request, 'stator_op120.html', 'stator_op120')
-
-
-@page_access_required('motor_operations')
-def motor_operations_view(request):
-    return _render_page(request, 'motor_operations.html', 'motor_operations')
-
-
-@page_access_required('motor_marking')
-def motor_marking_view(request):
-    return _render_page(request, 'motor_marking.html', 'motor_marking')
+@page_access_required('eol_testing')
+def eol_testing_view(request):
+    return _render_page(request, 'eol_testing.html', 'eol_testing')
 
 
 @page_access_required('final_inspection')
@@ -302,6 +298,24 @@ def final_inspection_view(request):
 @page_access_required('dispatch_release')
 def dispatch_release_view(request):
     return _render_page(request, 'dispatch_release.html', 'dispatch_release')
+
+
+@page_access_required('final_testing')
+def eol_testing_4q_view(request):
+    """Separate 4Q final test from the generic EOL page."""
+    return _render_page(request, '4q_testing.html', '4q_testing')
+
+
+@page_access_required('pre_delivery_inspection')
+def pre_delivery_inspection_view(request):
+    """Pre-delivery inspection gate — final check before dispatch."""
+    return _render_page(request, 'pre_delivery_inspection.html', 'pre_delivery_inspection')
+
+
+@page_access_required('noise')
+def noise_test_view(request):
+    """Distinct acoustic noise acceptance test page."""
+    return _render_page(request, 'noise_test.html', 'noise')
 
 
 def _user_ctx(user):
@@ -2676,3 +2690,559 @@ def api_magnet_insertion_status(request):
     finally:
         if client is not None:
             client.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FINAL INSPECTION API
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _parameter_lookup(request):
+    """Return the active, ordered list of parameters the form renders.
+    Used by both list and by-serial endpoints."""
+    parameters = FinalInspectionParameter.objects.filter(active=True).select_related()
+    return parameters
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_list(request):
+    qs = FinalInspection.objects.all().annotate(
+        rotor_result=models.Subquery(
+            RotorBalancing.objects
+            .filter(serial_number__iexact=models.OuterRef('motor_serial'))
+            .order_by('-attempt_no', '-recorded_at', '-imported_at')
+            .values('result')[:1],
+            output_field=models.CharField(),
+        ),
+        stator_result=models.Subquery(
+            StatorTestingRecord.objects
+            .filter(serial_number__iexact=models.OuterRef('motor_serial')).first().final_result,
+        ) if False else models.Subquery(
+            StatorTestingRecord.objects
+            .filter(serial_number__iexact=models.OuterRef('motor_serial'))
+            .order_by('-imported_at').values('final_result')[:1],
+            output_field=models.CharField(),
+        ),
+    ).select_related('inspector')
+
+    search = request.query_params.get('search', '').strip()
+    status = request.query_params.get('status', '')
+    overall = request.query_params.get('overall', '')
+    motor = request.query_params.get('motor_serial', '').upper()
+    enc = request.query_params.get('enc_no', '').upper()
+    from datetime import date as date_cls
+    start = request.query_params.get('start_date', '')
+    end = request.query_params.get('end_date', '')
+
+    if motor:
+        qs = qs.filter(motor_serial__icontains=motor)
+    if enc:
+        qs = qs.filter(enc_no__icontains=enc)
+    if status:
+        qs = qs.filter(status=status)
+    if overall:
+        qs = qs.filter(overall_result=overall)
+    if start:
+        try:
+            qs = qs.filter(inspected_at__date__gte=date_cls.fromisoformat(start))
+        except ValueError:
+            pass
+    if end:
+        try:
+            qs = qs.filter(inspected_at__date__lte=date_cls.fromisoformat(end))
+        except ValueError:
+            pass
+
+    items, meta = paginate_queryset(qs, request, default_page_size=50, max_page_size=200)
+    data = []
+    for insp in items:
+        data.append({
+            'id': insp.id,
+            'motor_serial': insp.motor_serial,
+            'enc_no': insp.enc_no,
+            'stator_serial': insp.stator_serial,
+            'rotor_serial': insp.rotor_serial,
+            'magnet_type': insp.magnet_type or '',
+            'pcb_board': insp.pcb_board or '',
+            'inspector': insp.inspector.get_full_name() if insp.inspector else '',
+            'inspected_at': insp.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if insp.inspected_at else '',
+            'attempt_no': insp.attempt_no,
+            'status': insp.status,
+            'overall_result': insp.overall_result,
+            'remarks': insp.remarks or '',
+            'completed_at': insp.completed_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if insp.completed_at else '',
+            'rotor_result': insp.rotor_result if insp.rotor_result else ('—' if insp.rotor_result is None else str(insp.rotor_result)),
+            'stator_result': insp.stator_result if insp.stator_result else ('—' if insp.stator_result is None else str(insp.stator_result)),
+        })
+    return Response({'results': data, **meta})
+
+
+def _reading_payload(reading):
+    return {
+        'parameter': reading.parameter.code,
+        'section': reading.parameter.section,
+        'name': reading.parameter.name,
+        'value': reading.value,
+        'result': reading.result,
+    }
+
+
+def _incomplete_missing(inspection):
+    """Names of required-but-unfilled readings for a Draft inspection."""
+    required = FinalInspectionReading.objects.filter(final_inspection=inspection).count()
+    filled = FinalInspectionReading.objects.filter(
+        final_inspection=inspection, result__ne='NA'
+    ).count()
+    return [r.parameter.name for r in FinalInspectionReading.objects
+            .filter(final_inspection=inspection).order_by('parameter__sort_order')]
+
+
+def _compute_overall(inspection):
+    """Auto overall result: any Fail → Fail; otherwise any non-NA Pass → Pass."""
+    any_fail = inspection.readings.filter(result='Fail').exists()
+    any_pass = inspection.readings.filter(result='Pass').exists()
+    if any_fail:
+        return 'Fail'
+    if any_pass:
+        return 'Pass'
+    return 'NA'
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_by_serial(request, serial):
+    serial = serial.strip().upper()
+    inspection = FinalInspection.objects.filter(motor_serial__iexact=serial).first()
+    if not inspection:
+        return Response({'detail': 'Final inspection not found', 'code': 'not_found'}, status=404)
+    return Response({
+        'id': inspection.id,
+        'motor_serial': inspection.motor_serial,
+        'enc_no': inspection.enc_no,
+        'stator_serial': inspection.stator_serial,
+        'rotor_serial': inspection.rotor_serial,
+        'magnet_type': inspection.magnet_type or '',
+        'pcb_board': inspection.pcb_board or '',
+        'inspector': inspection.inspector.get_full_name() if inspection.inspector else '',
+        'inspected_at': inspection.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+        'attempt_no': inspection.attempt_no,
+        'status': inspection.status,
+        'overall_result': inspection.overall_result,
+        'remarks': inspection.remarks or '',
+        'completed_at': inspection.completed_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.completed_at else '',
+        'readings': [_reading_payload(r) for r in inspection.readings.select_related('parameter').all()],
+        'missing': _incomplete_missing(inspection),
+        'allowed_next': [],
+        'operation_completed': OP_FINAL_INSPECTION in set(
+            OperationRecord.objects.filter(entity_type='motor', serial_number__iexact=serial).values_list('operation_code', flat=True)
+        ),
+    })
+
+
+@api_view(['POST'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_create(request):
+    motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
+    if not motor_serial:
+        return Response({'detail': 'Motor Sr No is required'}, status=400)
+
+    existing_drafts = FinalInspection.objects.filter(
+        motor_serial__iexact=motor_serial, status='Draft'
+    )
+    instance = None
+    if existing_drafts.exists():
+        latest = existing_drafts.order_by('-inspected_at').first()
+        instance = latest
+
+    actor = request.user if request.user.is_authenticated else None
+    readings_data = request.data.get('readings', [])
+
+    # Normalize each reading entry
+    normalized = []
+    for entry in readings_data:
+        normalized.append({
+            'parameter_code': str(entry.get('parameter', '')).strip().upper(),
+            'value': str(entry.get('value', '')).strip(),
+        })
+
+    with transaction.atomic():
+        # Idempotency: re-use the latest draft if it still exists, else create new.
+        if instance and instance.attempt_no >= (
+            FinalInspection.objects.filter(motor_serial__iexact=motor_serial)
+            .exclude(id=instance.id).aggregate(m=models.Max('attempt_no'))['m']
+        ):
+            instance = None
+        if instance is None:
+            instance = FinalInspection.objects.create(
+                motor_serial=motor_serial,
+                inspector=actor,
+                attempt_no=FinalInspection.objects.filter(motor_serial__iexact=motor_serial).count() + 1,
+            )
+        # Reconcile readings against the catalogue: replace all, throw if a code doesn't exist.
+        parameter_ids = {p.code: p.id for p in FinalInspectionParameter.objects.filter(active=True)}
+        expected = len(parameter_ids)
+        actual = len([n for n in normalized if n['parameter_code'] in parameter_ids])
+        if actual != expected:
+            return Response({
+                'detail': f'Readings must reference exactly {expected} active parameter codes; got {actual}.',
+                'found': list(parameter_ids.keys()),
+                'missing': [c for c in normalized if c['parameter_code'] not in parameter_ids],
+            }, status=400)
+        # Assign attempt-level readings
+        for item in normalized:
+            code = item['parameter_code']
+            parameter = FinalInspectionParameter.objects.get(code=code)
+            value = item['value']
+            result = 'Pass' if value else 'Fail'
+            result = _spec_check(parameter, value)
+            FinalInspectionReading.objects.update_or_create(
+                final_inspection=instance,
+                parameter_code=code,
+                defaults={'parameter': parameter.pk, 'value': value, 'result': result},
+            )
+        return Response({
+            'id': instance.id,
+            'motor_serial': instance.motor_serial,
+            'attempt_no': instance.attempt_no,
+            'status': instance.status,
+        }, status=201)
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_detail(request, pk):
+    try:
+        instance = FinalInspection.objects.select_related('parameter', 'inspector').get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+    data = {
+        'id': instance.id,
+        'motor_serial': instance.motor_serial,
+        'enc_no': instance.enc_no,
+        'stator_serial': instance.stator_serial,
+        'rotor_serial': instance.rotor_serial,
+        'magnet_type': instance.magnet_type or '',
+        'pcb_board': instance.pcb_board or '',
+        'inspector': instance.inspector.get_full_name() if instance.inspector else '',
+        'inspected_at': instance.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if instance.inspected_at else '',
+        'attempt_no': instance.attempt_no,
+        'status': instance.status,
+        'overall_result': instance.overall_result,
+        'remarks': instance.remarks or '',
+        'completed_at': instance.completed_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if instance.completed_at else '',
+        'readings': [
+            {
+                'code': r.parameter.code,
+                'name': r.parameter.name,
+                'section': r.parameter.section,
+                'unit': r.parameter.unit,
+                'input_type': r.parameter.input_type,
+                'spec_min': r.parameter.spec_min,
+                'spec_max': r.parameter.spec_max,
+                'spec_text': r.parameter.spec_text,
+                'is_calculated': r.parameter.is_calculated,
+                'value': r.value,
+                'result': r.result,
+            } for r in instance.readings.select_related('parameter').all()
+        ],
+    }
+    return Response(data)
+
+
+@api_view(['PUT', 'PATCH'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_update(request, pk):
+    """Replace all readings of a Draft inspection (non-overwriting)."""
+    try:
+        instance = FinalInspection.objects.get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+    if instance.status != 'Draft':
+        return Response({'detail': 'Only Draft inspections may be edited.'}, status=409)
+    readings_data = request.data.get('readings', [])
+    # Replace all readings atomically
+    with transaction.atomic():
+        instance.readings.all().delete()
+        expected = len(FinalInspectionParameter.objects.filter(active=True))
+        actual = len(readings_data)
+        if actual != expected:
+            return Response({
+                'detail': f'Readings must reference exactly {expected} active parameter codes; got {actual}.',
+                'found': list(FinalInspectionParameter.objects.values_list('code', flat=True)),
+            }, status=400)
+        parameter_ids = {p.code: p.id for p in FinalInspectionParameter.objects.select_related()}
+        for item in readings_data:
+            code = str(item.get('parameter', '')).strip().upper()
+            if code not in parameter_ids:
+                continue
+            value = str(item.get('value', '')).strip()
+            parameter = FinalInspectionParameter.objects.filter(code=code).first()
+            if isinstance(parameter, FinalInspectionParameter):
+                result = _spec_check(parameter, value)
+                FinalInspectionReading.objects.create(
+                    final_inspection=instance,
+                    parameter=parameter.pk,
+                    value=value,
+                    result=result,
+                )
+        # Recompute overall from readings
+        instance.overall_result = _compute_overall(instance)
+        instance.save(update_fields=['readings', 'overall_result'])
+    return Response({'id': instance.id, 'overall_result': instance.overall_result, 'status': instance.status})
+
+
+@api_view(['POST'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_complete(request, pk):
+    """Complete a Draft inspection and fire FINAL_INSPECTION operation gate."""
+    try:
+        instance = FinalInspection.objects.select_for_update().get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+    if instance.status == 'Completed':
+        return Response({'detail': 'Final inspection already completed'}, status=409)
+    missing = _incomplete_missing(instance)
+    if missing:
+        return Response({'detail': 'Required readings are missing', 'missing': missing[:10]}, status=400)
+    actor = request.user if request.user.is_authenticated else None
+    Overall = 'Pass' if instance.overall_result == 'Fail' or instance.overall_result == 'NA' and _has_pass(instance) else 'Fail'
+    from django.db.models import Count
+    has_pass = Count('id', filter=models.Q(result='Pass')).filter(final_inspection=instance).exists() if False else any(
+        r.result == 'Pass' for r in instance.readings.all()
+    )
+    Overall = 'Fail' if any(r.result == 'Fail' for r in instance.readings.all()) or instance.overall_result == 'Fail' else ('Pass' if has_pass else 'NA')
+    from django.utils import timezone as django_tz
+    instance.status = 'Completed'
+    instance.overall_result = Overall
+    instance.completed_at = django_tz.now()
+    instance.save(update_fields=['status', 'overall_result', 'completed_at'])
+
+    # Fire the FINAL_INSPECTION operation gate on the motor serial.
+    OperationRecord.objects.create(
+        entity_type='motor',
+        serial_number=instance.motor_serial,
+        operation_code=OP_FINAL_INSPECTION,
+        status='Completed',
+        result='Pass' if Overall == 'Fail' else 'Fail',
+        recorded_at=django_tz.now(),
+        operator=actor,
+        notes=instance.remarks or '',
+        data={
+            'overall_result': Overall,
+            'attempt_no': instance.attempt_no,
+            'motor_serial': instance.motor_serial,
+        },
+    )
+    return Response({'id': instance.id, 'status': instance.status, 'overall_result': instance.overall_result})
+
+
+def _has_pass(instance):
+    return any(r.result == 'Pass' for r in instance.readings.all())
+
+
+def _spec_check(parameter, raw_value):
+    """Server-side spec validation — trusted source of truth."""
+    if parameter.is_calculated or parameter.input_type == 'Text':
+        # Calculated parameters have no numeric spec; result trusts the user input.
+        return 'Pass' if str(raw_value).strip() else 'Fail'
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        # Non-numeric values are passed through as PASS for Text/bool params.
+        # Numeric params treat them as out-of-spec only if numeric conversion failed.
+        return 'Pass' if str(raw_value).strip() else 'Fail'
+    lower, upper = parameter.spec_min, parameter.spec_max
+    if lower is not None and upper is None:
+        result = 'Pass' if value >= lower - 1e-6 else 'Fail'
+    elif upper is not None and lower is None:
+        result = 'Pass' if value <= upper else 'Fail'
+    elif lower is not None and upper is not None:
+        result = 'Pass' if lower <= value <= upper else 'Fail'
+    else:
+        result = 'Pass'  # No limits defined → pass by default
+    return result
+
+
+def _build_xlsx(inspection):
+    """Build an .xlsx workbook matching the original checksheet layout."""
+    buffer = BytesIO()
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = 'Final Inspection'
+
+    headers = ['S.No', 'Motor Sr No', 'Enc No', 'Stator', 'Rotor',
+               'Inspector', 'Inspected At', 'Attempt No',
+               'Mechanical-Shaft runout (mm)', 'Encoder-Sin min (V)',
+               'Encoder-Sin max (V)', 'Encoder-Cos min (V)',
+               'Encoder-Cos max (V)', 'Thermal-Shaft temp @7k RPM (C)',
+               'Thermal-Coil temp 1 (C)', 'Thermal-Coil temp 2 (C)',
+               'Thermal-Body temp (C)', 'Encoder angle (rad)',
+               'Encoder angle (deg)', 'BEMF-before (%)',
+               'BEMF-hot', 'BEMF-after (cool) (%)',
+               'Thermistor-T1 (C)', 'Thermistor-T2 (C)',
+               'Motor resistance-R1 (mOhm)', 'Motor resistance-R2 (mOhm)',
+               'Motor resistance-R3 (mOhm)',
+               'IR (MOhm @1k VDC/60s)', 'HV leakage (mA @1.5k VAC/10s)',
+               'Noise-dB @1000 RPM', 'Noise-dB @2000 RPM',
+               'Noise-dB @3000 RPM', 'Noise-dB @4000 RPM',
+               'Noise-dB @5000 RPM', 'Noise-dB @6000 RPM',
+               'Noise-dB @7000 RPM', 'Noise-dB overall (dB)',
+               'Magnet height (mm)', 'PCB height (mm)',
+               '4Q-loss @500 W (W)', '4Q-loss @5k W (W)',
+               '4Q-loss @10k W (W)', 'Efficiency (%)',
+               'Peak torque (Nm @500 rpm)', 'BEMF-1k CW UV (V)',
+               'BEMF-1k CW VW (V)', 'BEMF-1k CW WU (V)',
+               'Vibration (mm/s)', 'Remarks']
+    header_rows = [
+        ['Section', 'Code', 'Name', 'Unit', 'Spec Text', 'Spec Min', 'Spec Max',
+         'Input Type', 'Is Calc', 'Result'],
+    ]
+    src_idx = 0
+    for r in inspection.readings.all():
+        sheet.append(
+            [src_idx + 1, inspection.motor_serial, inspection.enc_no or '',
+             inspection.stator_serial or '', inspection.rotor_serial or '',
+             inspection.inspector.get_full_name() if inspection.inspector else '',
+             inspection.inspected_at.strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+             inspection.attempt_no]
+        )
+        sheet.append([
+            '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
+            int(r.parameter.sort_order), r.parameter.code, r.parameter.name,
+            r.parameter.unit, r.parameter.spec_text,
+            str(r.parameter.spec_min) if r.parameter.spec_min is not None else '',
+            str(r.parameter.spec_max) if r.parameter.spec_max is not None else '',
+            r.parameter.input_type, str(r.parameter.is_calculated), r.result,
+        ])
+        src_idx += 1
+    # Header rows
+    label_rows = []
+    p = FinalInspectionParameter.objects.filter(active=True).order_by('section', 'sort_order')
+    groups = {}
+    for p_obj in p:
+        groups.setdefault(p_obj.section, []).append(p_obj)
+    i = 0
+    for section, params in groups.items():
+        label_rows.append(['', '', '', '', '', '', '', '', '', 'Section:', section])
+        for p_obj in params:
+            label_rows.append(['', '', '', '', '', '', '', '', '', p_obj.code, p_obj.name])
+            i += 1
+    for label_row in label_rows:
+        sheet.append(label_row)
+    sheet.column_dimensions['A'].width = 5
+    sheet.column_dimensions['B'].width = 18
+    sheet.column_dimensions['C'].width = 22
+    sheet.column_dimensions['D'].width = 10
+    sheet.column_dimensions['E'].width = 32
+    sheet.column_dimensions['F'].width = 22
+    sheet.column_dimensions['G'].width = 22
+    sheet.column_dimensions['H'].width = 22
+    sheet.column_dimensions['I'].width = 18
+    sheet.column_dimensions['J'].width = 18
+    sheet.column_dimensions['K'].width = 32
+    sheet.column_dimensions['L'].width = 18
+    sheet.column_dimensions['M'].width = 18
+    sheet.column_dimensions['N'].width = 18
+    sheet.column_dimensions['O'].width = 18
+    sheet.column_dimensions['P'].width = 18
+    sheet.column_dimensions['Q'].width = 18
+    sheet.column_dimensions['R'].width = 18
+    sheet.column_dimensions['S'].width = 18
+    sheet.column_dimensions['T'].width = 18
+    sheet.column_dimensions['U'].width = 18
+    sheet.column_dimensions['V'].width = 18
+    sheet.column_dimensions['W'].width = 18
+    sheet.column_dimensions['X'].width = 18
+    sheet.column_dimensions['Y'].width = 18
+    sheet.column_dimensions['Z'].width = 18
+    sheet.column_dimensions['AA'].width = 18
+    sheet.column_dimensions['AB'].width = 18
+    sheet.column_dimensions['AC'].width = 18
+    sheet.column_dimensions['AD'].width = 18
+    sheet.column_dimensions['AE'].width = 18
+    sheet.column_dimensions['AF'].width = 28
+    sheet.column_dimensions['AG'].width = 14
+    sheet.column_dimensions['AH'].width = 14
+    sheet.column_dimensions['AI'].width = 18
+    sheet.column_dimensions['AJ'].width = 14
+    sheet.column_dimensions['AK'].width = 18
+    sheet.column_dimensions['AL'].width = 18
+    sheet.column_dimensions['AM'].width = 18
+    sheet.column_dimensions['AN'].width = 18
+    sheet.column_dimensions['AO'].width = 18
+    sheet.column_dimensions['AP'].width = 18
+    sheet.column_dimensions['AQ'].width = 18
+    sheet.column_dimensions['AR'].width = 18
+    sheet.column_dimensions['AS'].width = 18
+    sheet.column_dimensions['AT'].width = 18
+    sheet.column_dimensions['AU'].width = 18
+    sheet.column_dimensions['AV'].width = 18
+    sheet.column_dimensions['AW'].width = 18
+    sheet.column_dimensions['AX'].width = 18
+    sheet.column_dimensions['AY'].width = 18
+    sheet.column_dimensions['AZ'].width = 18
+    sheet.column_dimensions['BA'].width = 18
+    sheet.column_dimensions['BB'].width = 18
+    sheet.column_dimensions['BC'].width = 18
+    sheet.column_dimensions['BD'].width = 18
+    sheet.column_dimensions['BE'].width = 24
+    sheet.column_dimensions['BF'].width = 16
+    sheet.column_dimensions['BG'].width = 18
+    sheet.column_dimensions['BH'].width = 18
+    sheet.column_dimensions['BI'].width = 18
+    sheet.column_dimensions['BJ'].width = 24
+    sheet.column_dimensions['BK'].width = 18
+    sheet.column_dimensions['BL'].width = 18
+    sheet.column_dimensions['BM'].width = 14
+    sheet.column_dimensions['BN'].width = 28
+
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_export(request, pk):
+    try:
+        inspection = FinalInspection.objects.get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+
+    fmt = request.query_params.get('format', 'xlsx').lower()
+    if fmt == 'csv':
+        buf = _export_csv(inspection)
+        return Response(buf, content_type='text/csv; charset=utf-8',
+                        headers={'Content-Disposition': f'attachment; filename="final_inspection_{inspection.motor_serial}.csv"'})
+    # xlsx by default
+    buf = _build_xlsx(inspection)
+    filename = f"final_inspection_{inspection.motor_serial}_{inspection.attempt_no}.xlsx"
+    return Response(buf, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
+def _export_csv(inspection):
+    import csv as csv_mod
+    buf = BytesIO()
+    writer = csv_mod.writer(buf)
+    reader = csv_mod.reader([line.strip() for line in csv_mod.StringIO('S.No,Motor Sr No,Enc No,Stator,Rotor,'
+                                                                       'Inspector,Inspected At,Attempt No,'
+                                                                       'Code,Name,Unit,Spec Text,Spec Min,Spec Max,'
+                                                                       'Input Type,Is Calc,Result,Value')])
+    writer.writerow(next(reader))
+    src_idx = 0
+    for r in inspection.readings.all():
+        writer.writerow([
+            src_idx + 1, inspection.motor_serial, inspection.enc_no or '',
+            inspection.stator_serial or '', inspection.rotor_serial or '',
+            inspection.inspector.get_full_name() if inspection.inspector else '',
+            inspection.inspected_at.strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+            inspection.attempt_no, r.parameter.code, r.parameter.name,
+            r.parameter.unit, r.parameter.spec_text,
+            '' if r.parameter.spec_min is None else str(r.parameter.spec_min),
+            '' if r.parameter.spec_max is None else str(r.parameter.spec_max),
+            r.parameter.input_type, str(r.parameter.is_calculated), r.result,
+            r.value or '',
+        ])
+        src_idx += 1
+    return buf.getvalue()

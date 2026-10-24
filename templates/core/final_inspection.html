@@ -1,12 +1,12 @@
-{% extends base_template %}
+{% extends "core/base.html" %}
 {% block title %}Final Inspection | NAPINO CONTROL SYSTEMS{% endblock %}
 
 {% block content %}
 <div class="station-page max-w-[1100px] mx-auto px-8 py-6 space-y-5">
   <div class="station-page-header">
     <h2 class="text-2xl font-bold text-slate-900">Final Inspection</h2>
-    <p class="text-sm text-slate-500 mt-0.5">Record final inspection after motor OP120</p>
   </div>
+
   <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
     <div class="grid grid-cols-2 gap-4">
       <div>
@@ -14,48 +14,187 @@
         <input id="serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
       </div>
       <div>
-        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Result</label>
-        <select id="result" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg">
-          <option value="Pass">Pass</option>
-          <option value="Fail">Fail</option>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Enc No (optional)</label>
+        <input id="enc_no" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-4">
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Stator Serial</label>
+        <input id="stator_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Rotor Serial</label>
+        <input id="rotor_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Attempt</label>
+        <select id="attempt" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg">
+          <option value="1">Attempt 1</option>
+          <option value="2">Attempt 2</option>
+          <option value="3">Attempt 3</option>
         </select>
       </div>
     </div>
     <div>
-      <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Notes</label>
-      <input id="notes" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+      <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Remarks</label>
+      <input id="remarks" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
     </div>
-    <button onclick="recordOp()" class="px-4 py-2 bg-primary text-white font-bold rounded-lg">Record Final Inspection</button>
+    <button onclick="openEditor()" class="px-4 py-2 bg-primary text-white font-bold rounded-lg">Edit Readings</button>
     <div id="msg" class="text-sm"></div>
+
+    <hr class="border-slate-200" />
+
+    <div id="editor-root" class="space-y-4 hidden"></div>
   </div>
-  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-    <h3 class="font-bold text-slate-900 mb-3">Completed</h3>
-    <div id="completed" class="text-sm text-slate-600">None</div>
-    <button onclick="loadOps()" class="mt-2 text-xs text-primary font-bold">Load</button>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
+    <h3 class="font-bold text-slate-900">Completed</h3>
+    <div id="completed-list" class="text-sm text-slate-600"></div>
+    <div class="flex items-center gap-3">
+      <select id="complete-serial" class="mt-1 w-56 px-3 py-2 border border-slate-200 rounded-lg">
+        <option value="">Select inspection</option>
+      </select>
+      <button onclick="completeInspection()" class="px-4 py-2 bg-green-600 text-white font-bold rounded-lg">Complete</button>
+    </div>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold text-slate-900">Records</h3>
+      <a id="export-link" href="#" class="text-xs text-primary font-bold">Export Excel</a>
+    </div>
+    <div id="records-table" class="text-sm text-slate-600">None</div>
+    <div class="flex gap-3">
+      <input id="search-serial" type="text" placeholder="Search motor serial..."
+        class="w-72 px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      <button onclick="loadRecords()" class="text-xs text-primary font-bold">Search</button>
+    </div>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-async function recordOp() {
-  const serial = document.getElementById('serial').value.trim().toUpperCase();
-  const result = document.getElementById('result').value;
-  const notes = document.getElementById('notes').value.trim();
-  const res = await fetch('/api/operations/record/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entity_type: 'motor', serial_number: serial, operation_code: 'FINAL_INSPECTION', result: result, notes: notes })
-  });
+async function loadRecords() {
+  const search = document.getElementById('search-serial').value.trim().toUpperCase();
+  const url = '/api/final-inspection/?status=Completed&overall=Pass' +
+    (search ? ('&motor_serial=' + encodeURIComponent(search)) : '');
+  const res = await fetch(url);
   const data = await res.json();
-  document.getElementById('msg').textContent = res.ok ? (data.duplicate ? 'Already recorded' : 'Recorded') : (data.detail || 'Failed');
-  if (res.ok) loadOps();
+  if (!res.ok) { document.getElementById('records-table').textContent = data.detail || 'Error'; return; }
+  document.getElementById('records-table').innerHTML = (data.results || []).map(r =>
+    `<div class="flex justify-between border-b border-slate-100 py-1 mb-1">
+       <span class="font-mono text-slate-900">${r.motor_serial}</span>
+       <span class="text-xs text-slate-600">${r.attempt_no} · ${r.inspector || '—'} · ${r.overall_result || '—'}</span>
+     </div>`).join('');
 }
-async function loadOps() {
-  const serial = document.getElementById('serial').value.trim().toUpperCase();
-  if (!serial) return;
-  const res = await fetch('/api/operations/by-serial/motor/' + encodeURIComponent(serial) + '/');
+
+async function completeInspection() {
+  const inspId = document.getElementById('complete-serial').value;
+  if (!inspId) { alert('Select an inspection first'); return; }
+  const res = await fetch(`/api/final-inspection/${inspId}/complete/`, { method: 'POST' });
   const data = await res.json();
-  if (!res.ok) { document.getElementById('completed').textContent = data.detail || 'Error'; return; }
-  document.getElementById('completed').innerHTML = (data.completed || []).map(c => '<span class="inline-block px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold mr-1 mb-1">' + c + '</span>').join('') || 'None';
+  document.getElementById('msg').textContent = res.ok ? `Completed: overall ${data.overall_result}` : (data.detail || 'Failed');
+  if (res.ok) {
+    document.getElementById('complete-serial').value = '';
+    loadRecords();
+    location.reload();
+  }
+}
+
+let activeInspection = null;
+
+async function openEditor() {
+  const serial = document.getElementById('serial').value.trim().toUpperCase();
+  if (!serial) { alert('Motor Sr No is required'); return; }
+  const res = await fetch('/api/final-inspection/by-serial/' + encodeURIComponent(serial) + '/');
+  const data = await res.json();
+  if (!res.ok) { document.getElementById('msg').textContent = data.detail; return; }
+  activeInspection = data;
+  renderEditor(data);
+}
+
+function renderEditor(data) {
+  const root = document.getElementById('editor-root');
+  root.classList.remove('hidden');
+  root.innerHTML = '';
+  // Header
+  const header = document.createElement('div');
+  header.className = 'flex justify-between items-center text-sm';
+  header.innerHTML = `<span><b>${data.motor_serial}</b> attempt ${data.attempt_no} — ${data.status || 'Draft'}</span>`;
+  root.appendChild(header);
+
+  // Group readings by section
+  const bySection = {};
+  for (const r of (data.readings || [])) {
+    (bySection[r.section] = bySection[r.section] || []).push(r);
+  }
+  let idx = 0;
+  for (const [section, params] of Object.entries(bySection)) {
+    const group = document.createElement('div');
+    group.className = 'rounded-lg border border-slate-200 p-3 mb-2';
+    const title = document.createElement('div');
+    title.className = 'font-bold text-slate-900 mb-2';
+    title.textContent = section;
+    group.appendChild(title);
+
+    // Compute missing params
+    const paramNames = new Set((params || []).map(p => p.name));
+    const missing = data.missing || [];
+    for (const name of missing) {
+      if (!(params || []).some(p => p.name === name)) {
+        const p = { name: name, value: '', result: 'NA', code: '' };
+        params.push(p);
+      }
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'grid grid-cols-2 gap-2';
+    for (const param of params) {
+      const card = document.createElement('div');
+      card.className = 'p-2 border border-slate-200 rounded-lg relative';
+      card.innerHTML = `<label class="text-xs font-bold text-slate-600 uppercase tracking-wider">${param.name}</label>`;
+      const input = document.createElement('input');
+      input.type = param.input_type === 'Bool' ? 'text' : (param.is_calculated ? 'text' : 'number');
+      input.id = `reading-${idx}`;
+      input.dataset.code = param.code;
+      input.placeholder = param.spec_min != null ? `${param.spec_min}-${param.spec_max}${param.unit || ''}` : (param.spec_text || '');
+      card.appendChild(input);
+      grid.appendChild(card);
+      idx++;
+    }
+    group.appendChild(grid);
+    root.appendChild(group);
+  }
+
+  const cancel = document.createElement('button');
+  cancel.textContent = 'Cancel';
+  cancel.className = 'ml-auto text-xs text-slate-500 font-bold';
+  cancel.onclick = () => { root.classList.add('hidden'); };
+  root.appendChild(cancel);
+}
+
+async function saveReadings() {
+  const body = {};
+  body.motor_serial = document.getElementById('serial').value.trim().toUpperCase();
+  body.enc_no = document.getElementById('enc_no').value.trim().toUpperCase();
+  body.readings = [];
+  for (let i = 0; i < document.querySelectorAll('#editor-root input[data-code]').length; i++) {
+    const el = document.getElementById(`reading-${i}`);
+    body.readings.push({ parameter: el.dataset.code, value: el.value });
+  }
+  const res = await fetch('/api/final-inspection/<int:pk>/update/', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return await res.json();
+}
+
+async function finalize() {
+  // Save first if editable
+  const updateRes = await saveReadings();
+  if (!updateRes.id) { document.getElementById('msg').textContent = updateRes.detail || 'Save failed'; return; }
+  document.getElementById('msg').textContent = updateRes.overall_result || 'Saved';
+  location.reload();
 }
 {% endblock %}

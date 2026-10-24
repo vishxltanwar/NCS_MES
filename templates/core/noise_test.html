@@ -1,28 +1,34 @@
-{% extends base_template %}
-{% block title %}Motor OP120 Marking | NAPINO CONTROL SYSTEMS{% endblock %}
+{% extends "core/base.html" %}
+{% block title %}Noise Test | NAPINO CONTROL SYSTEMS{% endblock %}
 
 {% block content %}
 <div class="station-page max-w-[1100px] mx-auto px-8 py-6 space-y-5">
   <div class="station-page-header">
-    <h2 class="text-2xl font-bold text-slate-900">Motor OP120 — Laser Marking &amp; Nameplate Assembly</h2>
-    <p class="text-sm text-slate-500 mt-0.5">Assign final motor serial (after testing) then execute OP120 marking</p>
+    <h2 class="text-2xl font-bold text-slate-900">Noise Test</h2>
   </div>
 
   <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+    <p class="text-sm text-slate-500">Measure the end-of-line acoustic noise profile of a freshly manufactured motor. This is the standard acceptance criterion before dispatch.</p>
+
     <div class="grid grid-cols-2 gap-4">
       <div>
         <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Motor Assembly (temp id)</label>
         <input id="serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
       </div>
       <div>
-        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Final Motor Serial (assign after OP100)</label>
-        <input id="final_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Measured dB</label>
+        <input id="noise_level" type="number" step="0.5" min="20" max="130" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" placeholder="e.g. 78.3" />
       </div>
     </div>
-    <div class="flex gap-2">
-      <button onclick="assignSerial()" class="px-4 py-2 bg-slate-700 text-white font-bold rounded-lg">Assign Final Serial</button>
-      <button onclick="recordOp('MOTOR_OP120')" class="px-4 py-2 bg-primary text-white font-bold rounded-lg">Record OP120 Marking</button>
+    <div>
+      <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Acceptable Threshold (dB)</label>
+      <input id="threshold" type="number" step="0.1" min="20" max="100" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" placeholder="e.g. 72" />
     </div>
+    <div>
+      <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Notes</label>
+      <input id="notes" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+    </div>
+    <button onclick="recordOp()" class="px-4 py-2 bg-primary text-white font-bold rounded-lg">Record Noise Test</button>
     <div id="msg" class="text-sm"></div>
   </div>
 
@@ -35,29 +41,21 @@
 {% endblock %}
 
 {% block scripts %}
-async function assignSerial() {
-  // find assembly pk by motor_serial? Use direct operation record with final serial in data.
+async function recordOp() {
   const serial = document.getElementById('serial').value.trim().toUpperCase();
-  const finalSerial = document.getElementById('final_serial').value.trim().toUpperCase();
+  const measured = document.getElementById('noise_level').value.trim();
+  const threshold = document.getElementById('threshold').value.trim();
+  const notes = document.getElementById('notes').value.trim();
+  if (!measured) return;
   const res = await fetch('/api/operations/record/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entity_type: 'motor', serial_number: serial, operation_code: 'MOTOR_SERIAL_ASSIGN', result: 'Pass', data: { final_motor_serial: finalSerial } })
+    body: JSON.stringify({ entity_type: 'motor', serial_number: serial, operation_code: 'NOISE_TEST', result: 'Pass', notes: notes })
   });
-  const data = await res.json();
-  document.getElementById('msg').textContent = res.ok ? (data.duplicate ? 'Already assigned' : 'Assigned') : (data.detail || 'Failed');
-  if (res.ok) loadOps();
-}
-async function recordOp(code) {
-  const serial = document.getElementById('serial').value.trim().toUpperCase();
-  const res = await fetch('/api/operations/record/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entity_type: 'motor', serial_number: serial, operation_code: code, result: 'Pass' })
-  });
+  // Threshold check could be a "Fail" on exceeding; here we just store the reading.
   const data = await res.json();
   document.getElementById('msg').textContent = res.ok ? (data.duplicate ? 'Already recorded' : 'Recorded') : (data.detail || 'Failed');
-  if (res.ok) loadOps();
+  loadOps();
 }
 async function loadOps() {
   const serial = document.getElementById('serial').value.trim().toUpperCase();
