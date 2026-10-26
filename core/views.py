@@ -24,8 +24,6 @@ import openpyxl
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
-from pymodbus.client import ModbusTcpClient
-import struct
 from django.db import DatabaseError, IntegrityError, models, transaction
 from django.db.models.functions import Lower, RowNumber
 from reportlab.lib import colors
@@ -35,6 +33,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from utils.scanner import clean_scan_data
+from .plc_poller import get_plc_status, reset_plc_status
 from .models import (
     DailySerialCounter,
     LoginThrottle,
@@ -2161,6 +2160,7 @@ def api_magnet_insertion_create(request):
                 .first()
             )
             if existing:
+                reset_plc_status()
                 return Response({
                     'id': existing.id,
                     'stack_serial': existing.stack_serial,
@@ -2189,6 +2189,7 @@ def api_magnet_insertion_create(request):
             magnet_serial__iexact=magnet_serial,
         ).first()
         if existing:
+            reset_plc_status()
             return Response({
                 'id': existing.id,
                 'stack_serial': existing.stack_serial,
@@ -2209,6 +2210,7 @@ def api_magnet_insertion_create(request):
         logger.exception('Could not create magnet insertion record')
         return Response({'detail': 'Could not save magnet insertion record.'}, status=500)
 
+    reset_plc_status()
     return Response({
         'id': record.id,
         'stack_serial': record.stack_serial,
@@ -2252,56 +2254,24 @@ def api_magnet_insertion_delete(request, pk):
     }, status=409)
 
 
-def _decode_modbus_string(registers):
-    if not registers: return ""
-    b = b''
-    for reg in registers:
-        b += struct.pack('>H', reg)
-    # Strip null bytes and whitespace
-    return b.decode('ascii', errors='ignore').strip('\x00').strip()
-
 @api_view(['GET'])
 @api_access_required('magnet_read')
 def api_magnet_insertion_status(request):
-    client = None
     try:
-        if not settings.PLC_HOST:
-            raise RuntimeError('PLC_HOST is not configured')
-        client = ModbusTcpClient(
-            settings.PLC_HOST,
-            port=settings.PLC_PORT,
-            timeout=settings.PLC_TIMEOUT,
-        )
-        if not client.connect():
-            return Response({'connected': False})
-
-        res_mag = client.read_holding_registers(address=3230, count=15, device_id=1)
-        magnet_serial = ""
-        if not res_mag.isError():
-            magnet_serial = _decode_modbus_string(res_mag.registers)
-
-        res_stack = client.read_holding_registers(address=3260, count=15, device_id=1)
-        stack_serial = ""
-        if not res_stack.isError():
-            stack_serial = _decode_modbus_string(res_stack.registers)
-
-        cycle_complete = bool(magnet_serial and stack_serial)
-
-        return Response({
-            'connected': True,
-            'magnet_serial': magnet_serial or None,
-            'stack_serial': stack_serial or None,
-            'cycle_complete': cycle_complete,
-            # Not yet read from PLC registers — omit so auto-save does not record fake PASS/0s.
-            'pass_fail': None,
-            'cycle_time': None,
-        })
+        state = get_plc_status()
     except Exception:
         logger.exception('PLC status poll failed')
         return Response({
             'connected': False,
             'error': 'PLC unavailable',
         }, status=503)
-    finally:
-        if client is not None:
-            client.close()
+
+    return Response({
+        'connected': bool(state.get('connected')),
+        'magnet_serial': state.get('magnet_serial'),
+        'stack_serial': state.get('stack_serial'),
+        'cycle_complete': bool(state.get('cycle_complete')),
+        'pass_fail': state.get('pass_fail'),
+        'cycle_time': state.get('cycle_time'),
+        'cycle_id': state.get('cycle_id', 0),
+    })

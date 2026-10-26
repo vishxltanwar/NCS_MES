@@ -73,7 +73,13 @@ Windows network share. Configure these integrations intentionally before launch:
 - For `LASER_SERIAL_FILE`, mount the approved SMB share on the host, bind-mount
   only that directory into `web`, then use the container path in
   `deploy/.env.production`.
-- Ensure the server has network routing and firewall permission to the PLC host.
+- The magnet insertion PLC defaults to `192.168.3.10` (`PLC_HOST`). The `web`
+  container must have a route to the PLC's subnet and firewall permission to
+  reach TCP port `502`. This is a routed network/layer-3 concern, not something
+  Docker port publishing changes: verify it from inside the container with
+  `docker compose exec web python -c "import socket; socket.create_connection(('192.168.3.10', 502), 3)"`.
+  If the PLC is only reachable from the machine PC, either put the MES on that
+  network or install a route/relay; publishing port `8000` will not fix it.
 
 Use stable device names (for example `/dev/serial/by-id/...`) rather than
 `/dev/ttyUSB0` where possible.

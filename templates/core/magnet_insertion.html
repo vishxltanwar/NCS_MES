@@ -261,19 +261,22 @@ async function saveRecord() {
   btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg">progress_activity</span> Saving...';
 
   try {
+    const payload = {
+      stack_serial: plcState.stack_serial,
+      magnet_serial: plcState.magnet_serial,
+      cycle_time: plcState.cycle_time,
+      pass_fail: plcState.pass_fail,
+      shift: currentShift,
+    };
+    console.info('[magnet] saving record', payload);
     const res = await fetch('/api/magnet-insertion/create/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        stack_serial: plcState.stack_serial,
-        magnet_serial: plcState.magnet_serial,
-        cycle_time: plcState.cycle_time,
-        pass_fail: plcState.pass_fail,
-        shift: currentShift,
-      })
+      body: JSON.stringify(payload)
     });
 
     const data = await res.json();
+    console.info('[magnet] save response', res.status, data);
 
     if (res.ok) {
       if (data.duplicate) {
@@ -379,23 +382,71 @@ function updatePlcUI() {
 // Poll the PLC endpoint to get: magnet_serial, stack_serial, cycle_complete,
 // cycle_time, pass_fail.
 
+// The PLC exposes the scanner values as short pulses. Latch the last non-null
+// value from each scanner, and latch cycle_complete, until the record is saved.
+let pollInFlight = false;
 setInterval(async () => {
-  if (isSaving) return;
+  if (isSaving || pollInFlight) return;
+  pollInFlight = true;
+  const previous = {
+    magnet: plcState.magnet_serial,
+    stack: plcState.stack_serial,
+    complete: plcState.cycle_complete,
+    time: plcState.cycle_time,
+    result: plcState.pass_fail,
+  };
   try {
     const res = await fetch('/api/magnet-insertion/status/');
     if (res.ok) {
       const data = await res.json();
       if (data.connected) {
-        const sameCycle = data.stack_serial === plcState.stack_serial
-          && data.magnet_serial === plcState.magnet_serial;
-        const manualCycleTime = manualProcessOverride && sameCycle ? plcState.cycle_time : null;
-        const manualResult = manualProcessOverride && sameCycle ? plcState.pass_fail : null;
-        if (!sameCycle) resetManualProcessData();
-        plcState = {
-          ...data,
-          cycle_time: data.cycle_time ?? manualCycleTime,
-          pass_fail: data.pass_fail ?? manualResult,
-        };
+        const incomingMagnet = data.magnet_serial || null;
+        const incomingStack = data.stack_serial || null;
+
+        // A new magnet code starts a new cycle and invalidates the old stack.
+        if (incomingMagnet && incomingMagnet !== plcState.magnet_serial) {
+          plcState.magnet_serial = incomingMagnet;
+          plcState.stack_serial = incomingStack;
+          plcState.cycle_complete = false;
+          plcState.pass_fail = null;
+          plcState.cycle_time = null;
+          resetManualProcessData();
+        }
+
+        // Latch short-lived scanner pulses instead of letting the next empty poll
+        // erase them.
+        if (incomingStack && incomingStack !== plcState.stack_serial) {
+          plcState.stack_serial = incomingStack;
+        }
+
+        plcState.connected = true;
+        plcState.cycle_complete = plcState.cycle_complete
+          || data.cycle_complete
+          || !!(plcState.magnet_serial && plcState.stack_serial);
+
+        // PLC values override stale values, but never erase a manual fallback
+        // or a value latched from an earlier poll in this cycle.
+        if (data.cycle_time !== null && data.cycle_time !== undefined) {
+          plcState.cycle_time = data.cycle_time;
+        }
+        if (data.pass_fail !== null && data.pass_fail !== undefined) {
+          plcState.pass_fail = data.pass_fail;
+        }
+
+        if (previous.magnet !== plcState.magnet_serial
+            || previous.stack !== plcState.stack_serial
+            || previous.complete !== plcState.cycle_complete
+            || previous.time !== plcState.cycle_time
+            || previous.result !== plcState.pass_fail) {
+          console.info('[magnet] plc state', {
+            magnet_serial: plcState.magnet_serial,
+            stack_serial: plcState.stack_serial,
+            cycle_complete: plcState.cycle_complete,
+            cycle_time: plcState.cycle_time,
+            pass_fail: plcState.pass_fail,
+          });
+        }
+
         if (plcState.stack_serial || plcState.magnet_serial) {
           magnetScanState.reading(
             plcState.stack_serial && plcState.magnet_serial
@@ -405,8 +456,8 @@ setInterval(async () => {
         } else if (magnetScanState.state === 'reading') {
           magnetScanState.ready();
         }
-        
-        // Auto-save only when PLC provides full cycle data (not stub pass/fail/time).
+
+        // Auto-save only when the latched cycle has every required value.
         if (plcState.cycle_complete
             && plcState.stack_serial
             && plcState.magnet_serial
@@ -424,11 +475,14 @@ setInterval(async () => {
     } else {
       plcState.connected = false;
     }
-  } catch {
+  } catch (err) {
     plcState.connected = false;
+    console.error('[magnet] status poll failed', err);
+  } finally {
+    pollInFlight = false;
   }
   updatePlcUI();
-}, 1000);
+}, 200);
 
 // ── Records Table ──────────────────────────────────────────────────────────
 async function loadRecords() {
