@@ -26,6 +26,7 @@ from openpyxl.utils import get_column_letter
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
+from pymodbus.client import ModbusTcpClient
 from rest_framework import status, serializers
 from .pagination import paginate_queryset
 from django.db.models.functions import RowNumber

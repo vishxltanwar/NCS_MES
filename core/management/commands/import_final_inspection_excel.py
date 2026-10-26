@@ -14,7 +14,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from core.final_inspection_specs import PARAMETER_SPECS
+from core.final_inspection_specs import CALCULATED_CODES, PARAMETER_SPECS
 from core.models import FinalInspection, FinalInspectionParameter, FinalInspectionReading
 from core.views import _spec_check
 
@@ -169,7 +169,7 @@ def _normalise_value(code, raw, spec, warnings, row_number):
 
     spec_min = spec.get('spec_min')
     spec_max = spec.get('spec_max')
-    if value and not _within_spec(value, spec_min, spec_max):
+    if code not in CALCULATED_CODES and value and not _within_spec(value, spec_min, spec_max):
         for factor in (1000, 100, 10):
             candidate = value / factor
             if _within_spec(candidate, spec_min, spec_max):
@@ -208,10 +208,10 @@ class Command(BaseCommand):
             self.stdout.write(f'WARNING: sheet "{sheet_name}" not found; using "{sheet.title}"')
 
         rows = list(sheet.iter_rows(values_only=True))
-        report_path = Path(options.get('report') or '')
-        if not str(report_path):
-            source = Path(path)
-            report_path = source.with_name(source.stem + '.import-report.txt')
+        report_option = options.get('report') or ''
+        report_path = Path(report_option) if report_option else None
+        if not report_path:
+            report_path = Path('import_reports') / (Path(path).stem + '.import-report.txt')
 
         warnings = []
         catalogue = self._catalogue(dry_run)

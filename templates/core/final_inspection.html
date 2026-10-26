@@ -5,20 +5,24 @@
 <div class="station-page max-w-[1100px] mx-auto px-8 py-6 space-y-5">
   <div class="station-page-header">
     <h2 class="text-2xl font-bold text-slate-900">Final Inspection</h2>
+    <a href="/final-inspection/records" class="text-xs text-primary font-bold hover:underline">View Records</a>
   </div>
 
   <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
     <div class="grid grid-cols-2 gap-4">
       <div>
-        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Motor Assembly (temp id)</label>
-        <input id="serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Motor Assembly / Serial</label>
+        <div class="flex gap-2">
+          <input id="serial" type="text" class="mt-1 flex-1 px-3 py-2 border border-slate-200 rounded-lg font-mono" placeholder="Enter serial and press Lookup" />
+          <button onclick="lookupAssembly()" class="px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50">Lookup</button>
+        </div>
       </div>
       <div>
-        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Enc No (optional)</label>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Enc No</label>
         <input id="enc_no" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
       </div>
     </div>
-    <div class="grid grid-cols-3 gap-4">
+    <div class="grid grid-cols-4 gap-4">
       <div>
         <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Stator Serial</label>
         <input id="stator_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
@@ -28,173 +32,254 @@
         <input id="rotor_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
       </div>
       <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Magnet Type</label>
+        <input id="magnet_type" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">PCB Board</label>
+        <input id="pcb_board" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-4">
+      <div>
         <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Attempt</label>
-        <select id="attempt" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg">
+        <select id="attempt" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono">
           <option value="1">Attempt 1</option>
           <option value="2">Attempt 2</option>
           <option value="3">Attempt 3</option>
         </select>
       </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Remarks</label>
+        <input id="remarks" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div class="flex items-end">
+        <button onclick="loadDraft()" class="w-full px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50">Load Draft</button>
+      </div>
     </div>
-    <div>
-      <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Remarks</label>
-      <input id="remarks" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
-    </div>
-    <button onclick="openEditor()" class="px-4 py-2 bg-primary text-white font-bold rounded-lg">Edit Readings</button>
     <div id="msg" class="text-sm"></div>
 
-    <hr class="border-slate-200" />
-
-    <div id="editor-root" class="space-y-4 hidden"></div>
-  </div>
-
-  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
-    <h3 class="font-bold text-slate-900">Completed</h3>
-    <div id="completed-list" class="text-sm text-slate-600"></div>
-    <div class="flex items-center gap-3">
-      <select id="complete-serial" class="mt-1 w-56 px-3 py-2 border border-slate-200 rounded-lg">
-        <option value="">Select inspection</option>
-      </select>
-      <button onclick="completeInspection()" class="px-4 py-2 bg-green-600 text-white font-bold rounded-lg">Complete</button>
-    </div>
-  </div>
-
-  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-3">
-    <div class="flex items-center justify-between">
-      <h3 class="font-bold text-slate-900">Records</h3>
-      <a id="export-link" href="#" class="text-xs text-primary font-bold">Export Excel</a>
-    </div>
-    <div id="records-table" class="text-sm text-slate-600">None</div>
-    <div class="flex gap-3">
-      <input id="search-serial" type="text" placeholder="Search motor serial..."
-        class="w-72 px-3 py-2 border border-slate-200 rounded-lg font-mono" />
-      <button onclick="loadRecords()" class="text-xs text-primary font-bold">Search</button>
+    <div id="editor-root" class="space-y-4"></div>
+    <div class="flex gap-3 pt-2">
+      <button onclick="saveReadings()" id="btn-save" class="px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none">Save Draft</button>
+      <button onclick="completeInspection()" id="btn-complete" class="px-4 py-2 bg-green-600 text-white font-bold rounded-lg disabled:opacity-50 disabled:pointer-events-none">Complete Inspection</button>
     </div>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-async function loadRecords() {
-  const search = document.getElementById('search-serial').value.trim().toUpperCase();
-  const url = '/api/final-inspection/?status=Completed&overall=Pass' +
-    (search ? ('&motor_serial=' + encodeURIComponent(search)) : '');
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) { document.getElementById('records-table').textContent = data.detail || 'Error'; return; }
-  document.getElementById('records-table').innerHTML = (data.results || []).map(r =>
-    `<div class="flex justify-between border-b border-slate-100 py-1 mb-1">
-       <span class="font-mono text-slate-900">${r.motor_serial}</span>
-       <span class="text-xs text-slate-600">${r.attempt_no} · ${r.inspector || '—'} · ${r.overall_result || '—'}</span>
-     </div>`).join('');
+async function loadParameters() {
+  const res = await fetch('/api/final-inspection/parameters/');
+  if (!res.ok) { showToast('Unable to load inspection parameters', 'error'); return; }
+  window.fiParameters = await res.json().then(d => d.parameters || []);
+  renderEditor(null);
 }
 
-async function completeInspection() {
-  const inspId = document.getElementById('complete-serial').value;
-  if (!inspId) { alert('Select an inspection first'); return; }
-  const res = await fetch(`/api/final-inspection/${inspId}/complete/`, { method: 'POST' });
-  const data = await res.json();
-  document.getElementById('msg').textContent = res.ok ? `Completed: overall ${data.overall_result}` : (data.detail || 'Failed');
-  if (res.ok) {
-    document.getElementById('complete-serial').value = '';
-    loadRecords();
-    location.reload();
-  }
+function headerValues() {
+  return {
+    motor_serial: document.getElementById('serial').value.trim().toUpperCase(),
+    enc_no: document.getElementById('enc_no').value.trim().toUpperCase(),
+    stator_serial: document.getElementById('stator_serial').value.trim().toUpperCase(),
+    rotor_serial: document.getElementById('rotor_serial').value.trim().toUpperCase(),
+    magnet_type: document.getElementById('magnet_type').value.trim(),
+    pcb_board: document.getElementById('pcb_board').value.trim(),
+    remarks: document.getElementById('remarks').value.trim(),
+    attempt_no: parseInt(document.getElementById('attempt').value, 10) || 1,
+  };
 }
 
-let activeInspection = null;
-
-async function openEditor() {
-  const serial = document.getElementById('serial').value.trim().toUpperCase();
-  if (!serial) { alert('Motor Sr No is required'); return; }
-  const res = await fetch('/api/final-inspection/by-serial/' + encodeURIComponent(serial) + '/');
-  const data = await res.json();
-  if (!res.ok) { document.getElementById('msg').textContent = data.detail; return; }
-  activeInspection = data;
-  renderEditor(data);
+function specPlaceholder(param) {
+  if (param.spec_min != null && param.spec_max != null) return `${param.spec_min}–${param.spec_max}${param.unit ? ' ' + param.unit : ''}`;
+  if (param.spec_min != null) return `min ${param.spec_min}${param.unit ? ' ' + param.unit : ''}`;
+  if (param.spec_max != null) return `max ${param.spec_max}${param.unit ? ' ' + param.unit : ''}`;
+  return param.spec_text || '';
 }
 
-function renderEditor(data) {
+function resultBadge(result) {
+  const colors = { Pass: 'bg-green-50 text-green-700', Fail: 'bg-red-50 text-red-700', NA: 'bg-slate-100 text-slate-500' };
+  return `<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${colors[result] || colors.NA}">${result}</span>`;
+}
+
+async function renderEditor(inspection) {
   const root = document.getElementById('editor-root');
-  root.classList.remove('hidden');
   root.innerHTML = '';
-  // Header
-  const header = document.createElement('div');
-  header.className = 'flex justify-between items-center text-sm';
-  header.innerHTML = `<span><b>${data.motor_serial}</b> attempt ${data.attempt_no} — ${data.status || 'Draft'}</span>`;
-  root.appendChild(header);
+  window.fiCurrentInspection = inspection;
+  const canEdit = !inspection || inspection.status === 'Draft';
 
-  // Group readings by section
-  const bySection = {};
-  for (const r of (data.readings || [])) {
-    (bySection[r.section] = bySection[r.section] || []).push(r);
+  if (!inspection) {
+    const empty = document.createElement('div');
+    empty.className = 'rounded-lg border border-slate-200 bg-slate-50 p-4';
+    empty.innerHTML = '<p class="text-sm text-slate-500">Load an existing draft or enter a motor serial and save to start.</p>';
+    root.appendChild(empty);
+  } else {
+    const header = document.createElement('div');
+    header.className = 'flex justify-between items-center text-sm mb-2';
+    header.innerHTML = `<span><b>${escapeHtml(inspection.motor_serial)}</b> attempt ${inspection.attempt_no} — ${inspection.status}</span>`;
+    root.appendChild(header);
   }
-  let idx = 0;
+
+  const readings = {};
+  if (inspection) {
+    for (const r of (inspection.readings || [])) readings[r.parameter.code] = r;
+  }
+
+  const bySection = {};
+  for (const param of (window.fiParameters || [])) {
+    (bySection[param.section] = bySection[param.section] || []).push(param);
+  }
+
   for (const [section, params] of Object.entries(bySection)) {
     const group = document.createElement('div');
     group.className = 'rounded-lg border border-slate-200 p-3 mb-2';
     const title = document.createElement('div');
-    title.className = 'font-bold text-slate-900 mb-2';
-    title.textContent = section;
+    title.className = 'font-bold text-slate-900 mb-2 flex items-center gap-2';
+    title.innerHTML = `<span class="material-symbols-outlined text-primary">list</span>${section}`;
     group.appendChild(title);
-
-    // Compute missing params
-    const paramNames = new Set((params || []).map(p => p.name));
-    const missing = data.missing || [];
-    for (const name of missing) {
-      if (!(params || []).some(p => p.name === name)) {
-        const p = { name: name, value: '', result: 'NA', code: '' };
-        params.push(p);
-      }
-    }
 
     const grid = document.createElement('div');
     grid.className = 'grid grid-cols-2 gap-2';
     for (const param of params) {
       const card = document.createElement('div');
       card.className = 'p-2 border border-slate-200 rounded-lg relative';
-      card.innerHTML = `<label class="text-xs font-bold text-slate-600 uppercase tracking-wider">${param.name}</label>`;
+      const reading = readings[param.code];
+      const value = reading ? reading.value : '';
+      const result = reading ? reading.result : 'NA';
+
+      const label = document.createElement('label');
+      label.className = 'text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1';
+      label.textContent = param.name;
+
       const input = document.createElement('input');
       input.type = param.input_type === 'Bool' ? 'text' : (param.is_calculated ? 'text' : 'number');
-      input.id = `reading-${idx}`;
+      input.disabled = param.is_calculated || !canEdit;
       input.dataset.code = param.code;
-      input.placeholder = param.spec_min != null ? `${param.spec_min}-${param.spec_max}${param.unit || ''}` : (param.spec_text || '');
-      card.appendChild(input);
+      input.value = value;
+      input.placeholder = specPlaceholder(param);
+      input.className = 'mt-1 w-full px-2 py-1.5 border rounded text-sm font-mono ' + (param.is_calculated ? 'bg-slate-100 text-slate-500' : 'bg-white text-slate-900');
+
+      const badge = document.createElement('span');
+      badge.className = 'absolute top-2 right-2 text-[10px] font-bold';
+      badge.innerHTML = resultBadge(result);
+
+      card.append(label, input, badge);
       grid.appendChild(card);
-      idx++;
     }
     group.appendChild(grid);
     root.appendChild(group);
   }
 
-  const cancel = document.createElement('button');
-  cancel.textContent = 'Cancel';
-  cancel.className = 'ml-auto text-xs text-slate-500 font-bold';
-  cancel.onclick = () => { root.classList.add('hidden'); };
-  root.appendChild(cancel);
+  if (!inspection) return;
+
+  const missing = inspection.missing || [];
+  if (missing.length) {
+    const warn = document.createElement('div');
+    warn.className = 'mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm';
+    warn.innerHTML = `<span class="material-symbols-outlined text-xs mr-1">warning</span>Missing: ${missing.join(', ')}`;
+    root.appendChild(warn);
+  }
+
+  document.getElementById('btn-save').disabled = !canEdit;
+  document.getElementById('btn-complete').disabled = !canEdit || missing.length > 0;
+}
+
+async function lookupAssembly() {
+  const serial = document.getElementById('serial').value.trim();
+  if (!serial) { showToast('Enter a serial first', 'warning'); return; }
+  try {
+    const res = await fetch('/api/final-inspection/assembly-lookup/' + encodeURIComponent(serial) + '/');
+    if (!res.ok) { showToast(res.status === 404 ? 'Motor assembly not found' : 'Lookup failed', 'error'); return; }
+    const data = await res.json();
+    document.getElementById('serial').value = data.motor_serial || serial;
+    document.getElementById('stator_serial').value = data.stator_serial || '';
+    document.getElementById('rotor_serial').value = data.rotor_serial || '';
+  } catch (err) {
+    showToast('Lookup failed', 'error');
+  }
+}
+
+async function loadDraft() {
+  const { motor_serial } = headerValues();
+  if (!motor_serial) { showToast('Motor serial is required', 'warning'); return; }
+  try {
+    const url = '/api/final-inspection/by-serial/' + encodeURIComponent(motor_serial) + '/' +
+      (document.getElementById('attempt').value ? '?attempt_no=' + document.getElementById('attempt').value : '');
+    const res = await fetch(url);
+    if (!res.ok) { showToast('Unable to load inspection', 'error'); return; }
+    const data = await res.json();
+    if (!data.found) {
+      showToast('No inspection found for this serial', 'info');
+      renderEditor(null);
+      return;
+    }
+    document.getElementById('enc_no').value = data.enc_no || '';
+    document.getElementById('stator_serial').value = data.stator_serial || '';
+    document.getElementById('rotor_serial').value = data.rotor_serial || '';
+    document.getElementById('magnet_type').value = data.magnet_type || '';
+    document.getElementById('pcb_board').value = data.pcb_board || '';
+    document.getElementById('remarks').value = data.remarks || '';
+    document.getElementById('attempt').value = data.attempt_no || 1;
+    renderEditor(data);
+  } catch (err) {
+    showToast('Unable to load inspection', 'error');
+  }
+}
+
+function collectReadings() {
+  const readings = [];
+  for (const el of document.querySelectorAll('#editor-root input[data-code]')) {
+    if (el.disabled) continue;
+    readings.push({ parameter: el.dataset.code, value: el.value });
+  }
+  return readings;
 }
 
 async function saveReadings() {
-  const body = {};
-  body.motor_serial = document.getElementById('serial').value.trim().toUpperCase();
-  body.enc_no = document.getElementById('enc_no').value.trim().toUpperCase();
-  body.readings = [];
-  for (let i = 0; i < document.querySelectorAll('#editor-root input[data-code]').length; i++) {
-    const el = document.getElementById(`reading-${i}`);
-    body.readings.push({ parameter: el.dataset.code, value: el.value });
+  const header = headerValues();
+  if (!header.motor_serial) { showToast('Motor serial is required', 'warning'); return; }
+  try {
+    let res;
+    if (window.fiCurrentInspection && window.fiCurrentInspection.id) {
+      res = await fetch(`/api/final-inspection/${window.fiCurrentInspection.id}/update/`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...header, readings: collectReadings() }),
+      });
+    } else {
+      res = await fetch('/api/final-inspection/', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...header, readings: collectReadings() }),
+      });
+    }
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      showToast(payload.detail || 'Save failed', 'error');
+      return;
+    }
+    const data = await res.json();
+    showToast(`Saved — ${data.overall_result || 'Draft'}`, 'success');
+    renderEditor(data);
+  } catch (err) {
+    showToast('Save failed', 'error');
   }
-  const res = await fetch('/api/final-inspection/<int:pk>/update/', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return await res.json();
 }
 
-async function finalize() {
-  // Save first if editable
-  const updateRes = await saveReadings();
-  if (!updateRes.id) { document.getElementById('msg').textContent = updateRes.detail || 'Save failed'; return; }
-  document.getElementById('msg').textContent = updateRes.overall_result || 'Saved';
-  location.reload();
+async function completeInspection() {
+  const inspection = window.fiCurrentInspection;
+  if (!inspection || !inspection.id) { showToast('No inspection to complete', 'warning'); return; }
+  const remarks = document.getElementById('remarks').value.trim();
+  try {
+    const res = await fetch(`/api/final-inspection/${inspection.id}/complete/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remarks }),
+    });
+    const payload = await res.json();
+    if (!res.ok) { showToast(payload.detail || 'Complete failed', 'error'); return; }
+    showToast(`Completed — ${payload.overall_result}`, 'success');
+    renderEditor(payload);
+  } catch (err) {
+    showToast('Complete failed', 'error');
+  }
 }
+
+loadParameters();
 {% endblock %}
