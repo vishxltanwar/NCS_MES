@@ -73,6 +73,8 @@ def _read_state():
 def _write_state(state):
     state['updated_at'] = time.time()
     directory = os.path.dirname(STATE_PATH) or '.'
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
     fd, temp_path = tempfile.mkstemp(dir=directory, prefix='.plc-status-')
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as handle:
@@ -283,6 +285,9 @@ def get_plc_status():
         _write_state(updated)
         return updated
 
+    lock_dir = os.path.dirname(LOCK_PATH)
+    if lock_dir and not os.path.exists(lock_dir):
+        os.makedirs(lock_dir, exist_ok=True)
     lock_handle = open(LOCK_PATH, 'a+')
     try:
         try:
@@ -321,6 +326,9 @@ def reset_plc_status():
         _write_state(state)
         return
 
+    lock_dir = os.path.dirname(LOCK_PATH)
+    if lock_dir and not os.path.exists(lock_dir):
+        os.makedirs(lock_dir, exist_ok=True)
     lock_handle = open(LOCK_PATH, 'a+')
     try:
         fcntl.flock(lock_handle, fcntl.LOCK_EX)
