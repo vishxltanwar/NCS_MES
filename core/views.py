@@ -29,7 +29,7 @@ from django.utils import timezone as django_tz
 from rest_framework import status, serializers
 from .pagination import paginate_queryset
 from django.db.models.functions import RowNumber
-from django.db import transaction
+from django.db import models, transaction
 from django.db.models.functions import Lower, RowNumber
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -47,6 +47,7 @@ from .models import (
     MagnetInsertion,
     MotorAssembly,
     OperationRecord,
+    OP_FINAL_INSPECTION,
     Part,
     PART_TYPES,
     RotorBalancing,
@@ -2978,9 +2979,69 @@ def _inspection_list_payload(inspection):
     }
 
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
 @api_access_required('final_inspection_read')
 def api_final_inspection_list(request):
+    if request.method == 'POST':
+        if not can_access_action(request.user, 'final_inspection_write'):
+            return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+        try:
+            motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+        if not motor_serial:
+            return Response({'detail': 'Motor Sr No is required'}, status=400)
+
+        attempt_no = None
+        raw_attempt = request.data.get('attempt_no')
+        if raw_attempt not in (None, ''):
+            try:
+                attempt_no = int(raw_attempt)
+            except (TypeError, ValueError):
+                return Response({'detail': 'Attempt No must be a number'}, status=400)
+            if attempt_no < 1:
+                return Response({'detail': 'Attempt No must be at least 1'}, status=400)
+
+        actor = request.user if request.user.is_authenticated else None
+        readings_data = request.data.get('readings', [])
+        if not isinstance(readings_data, list):
+            return Response({'detail': 'readings must be a list'}, status=400)
+
+        try:
+            with transaction.atomic():
+                instance = None
+                if attempt_no is not None:
+                    instance = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial, attempt_no=attempt_no,
+                    ).first()
+                else:
+                    instance = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial, status='Draft',
+                    ).order_by('-attempt_no').first()
+                    if instance is None:
+                        maximum = FinalInspection.objects.filter(
+                            motor_serial__iexact=motor_serial,
+                        ).aggregate(m=models.Max('attempt_no'))['m'] or 0
+                        attempt_no = maximum + 1
+
+                if instance is None:
+                    instance = FinalInspection.objects.create(
+                        motor_serial=motor_serial,
+                        attempt_no=attempt_no or 1,
+                        inspector=actor,
+                    )
+                elif instance.status != 'Draft':
+                    return Response({'detail': 'Final inspection already completed'}, status=409)
+
+                _apply_header_fields(instance, request.data)
+                instance.save()
+                _upsert_readings(instance, readings_data)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        data = _inspection_detail_payload(instance)
+        return Response(data, status=201)
+
     qs = _filter_inspections(request)
     items, meta = paginate_queryset(qs, request, default_page_size=50, max_page_size=200)
     return Response({'results': [_inspection_list_payload(i) for i in items], **meta})
@@ -3268,6 +3329,8 @@ def _spec_check(parameter, raw_value):
     try:
         value = float(raw)
     except (TypeError, ValueError):
+        return 'Fail'
+    if value < 0 and lower is None:
         return 'Fail'
     if lower is not None and upper is not None:
         return 'Pass' if lower <= value <= upper else 'Fail'

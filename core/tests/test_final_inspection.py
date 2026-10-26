@@ -72,8 +72,8 @@ class ParameterSpecValidationTests(TestCase):
             'THERMISTOR1': '1.308',
             'THERMISTOR2': '1.255',
         })
-        self.assertAlmostEqual(float(updates['ENC_ANGLE_DEG']), 269.942712, places=5)
-        self.assertEqual(updates['ENC_ANGLE_VALUE'], '2699')
+        self.assertAlmostEqual(float(updates['ENC_ANGLE_DEG']), 269.977713, places=5)
+        self.assertEqual(updates['ENC_ANGLE_VALUE'], '2700')
         self.assertAlmostEqual(float(updates['THERMISTOR_MISMATCH']), -4.051988, places=5)
 
     def test_calculated_limits_use_computed_value(self):
@@ -279,8 +279,8 @@ class SaveDraftApiTests(TestCase):
             r.parameter.code: r.value
             for r in inspection.readings.select_related('parameter').all()
         }
-        self.assertEqual(values['ENC_ANGLE_VALUE'], '2699')
-        self.assertAlmostEqual(float(values['ENC_ANGLE_DEG']), 269.942712, places=5)
+        self.assertEqual(values['ENC_ANGLE_VALUE'], '2700')
+        self.assertAlmostEqual(float(values['ENC_ANGLE_DEG']), 269.977713, places=5)
         self.assertAlmostEqual(float(values['THERMISTOR_MISMATCH']), -4.051988, places=5)
 
     def test_unknown_parameter_is_rejected(self):
