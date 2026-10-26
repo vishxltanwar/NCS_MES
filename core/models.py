@@ -515,6 +515,14 @@ class FinalInspectionParameter(models.Model):
         ordering = ['section', 'sort_order', 'id']
         constraints = [
             models.UniqueConstraint(fields=['code'], name='final_param_code_unique'),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(spec_min__isnull=True)
+                    | models.Q(spec_max__isnull=True)
+                    | models.Q(spec_min__lte=models.F('spec_max'))
+                ),
+                name='final_param_spec_range_valid',
+            ),
         ]
 
     def __str__(self):
@@ -526,7 +534,8 @@ class FinalInspection(models.Model):
     COMPLETED = 'Completed'
     STATUS_CHOICES = [(DRAFT, DRAFT), (COMPLETED, COMPLETED)]
 
-    motor_serial      = models.CharField(max_length=32, unique=True, db_index=True)
+    motor_serial      = models.CharField(max_length=32, db_index=True)
+    assembly_temp_id  = models.CharField(max_length=32, blank=True, default='', db_index=True)
     enc_no            = models.CharField(max_length=32, blank=True, default='', db_index=True)
     stator_serial     = models.CharField(max_length=32, db_index=True, blank=True, default='')
     rotor_serial      = models.CharField(max_length=32, db_index=True, blank=True, default='')
