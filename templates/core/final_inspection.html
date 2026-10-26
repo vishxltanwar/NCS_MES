@@ -1,0 +1,285 @@
+{% extends "core/base.html" %}
+{% block title %}Final Inspection | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block content %}
+<div class="station-page max-w-[1100px] mx-auto px-8 py-6 space-y-5">
+  <div class="station-page-header">
+    <h2 class="text-2xl font-bold text-slate-900">Final Inspection</h2>
+    <a href="/final-inspection/records" class="text-xs text-primary font-bold hover:underline">View Records</a>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Motor Assembly / Serial</label>
+        <div class="flex gap-2">
+          <input id="serial" type="text" class="mt-1 flex-1 px-3 py-2 border border-slate-200 rounded-lg font-mono" placeholder="Enter serial and press Lookup" />
+          <button onclick="lookupAssembly()" class="px-3 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50">Lookup</button>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Enc No</label>
+        <input id="enc_no" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+    </div>
+    <div class="grid grid-cols-4 gap-4">
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Stator Serial</label>
+        <input id="stator_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Rotor Serial</label>
+        <input id="rotor_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Magnet Type</label>
+        <input id="magnet_type" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">PCB Board</label>
+        <input id="pcb_board" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-4">
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Attempt</label>
+        <select id="attempt" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono">
+          <option value="1">Attempt 1</option>
+          <option value="2">Attempt 2</option>
+          <option value="3">Attempt 3</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Remarks</label>
+        <input id="remarks" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div class="flex items-end">
+        <button onclick="loadDraft()" class="w-full px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50">Load Draft</button>
+      </div>
+    </div>
+    <div id="msg" class="text-sm"></div>
+
+    <div id="editor-root" class="space-y-4"></div>
+    <div class="flex gap-3 pt-2">
+      <button onclick="saveReadings()" id="btn-save" class="px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none">Save Draft</button>
+      <button onclick="completeInspection()" id="btn-complete" class="px-4 py-2 bg-green-600 text-white font-bold rounded-lg disabled:opacity-50 disabled:pointer-events-none">Complete Inspection</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+async function loadParameters() {
+  const res = await fetch('/api/final-inspection/parameters/');
+  if (!res.ok) { showToast('Unable to load inspection parameters', 'error'); return; }
+  window.fiParameters = await res.json().then(d => d.parameters || []);
+  renderEditor(null);
+}
+
+function headerValues() {
+  return {
+    motor_serial: document.getElementById('serial').value.trim().toUpperCase(),
+    enc_no: document.getElementById('enc_no').value.trim().toUpperCase(),
+    stator_serial: document.getElementById('stator_serial').value.trim().toUpperCase(),
+    rotor_serial: document.getElementById('rotor_serial').value.trim().toUpperCase(),
+    magnet_type: document.getElementById('magnet_type').value.trim(),
+    pcb_board: document.getElementById('pcb_board').value.trim(),
+    remarks: document.getElementById('remarks').value.trim(),
+    attempt_no: parseInt(document.getElementById('attempt').value, 10) || 1,
+  };
+}
+
+function specPlaceholder(param) {
+  if (param.spec_min != null && param.spec_max != null) return `${param.spec_min}–${param.spec_max}${param.unit ? ' ' + param.unit : ''}`;
+  if (param.spec_min != null) return `min ${param.spec_min}${param.unit ? ' ' + param.unit : ''}`;
+  if (param.spec_max != null) return `max ${param.spec_max}${param.unit ? ' ' + param.unit : ''}`;
+  return param.spec_text || '';
+}
+
+function resultBadge(result) {
+  const colors = { Pass: 'bg-green-50 text-green-700', Fail: 'bg-red-50 text-red-700', NA: 'bg-slate-100 text-slate-500' };
+  return `<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${colors[result] || colors.NA}">${result}</span>`;
+}
+
+async function renderEditor(inspection) {
+  const root = document.getElementById('editor-root');
+  root.innerHTML = '';
+  window.fiCurrentInspection = inspection;
+  const canEdit = !inspection || inspection.status === 'Draft';
+
+  if (!inspection) {
+    const empty = document.createElement('div');
+    empty.className = 'rounded-lg border border-slate-200 bg-slate-50 p-4';
+    empty.innerHTML = '<p class="text-sm text-slate-500">Load an existing draft or enter a motor serial and save to start.</p>';
+    root.appendChild(empty);
+  } else {
+    const header = document.createElement('div');
+    header.className = 'flex justify-between items-center text-sm mb-2';
+    header.innerHTML = `<span><b>${escapeHtml(inspection.motor_serial)}</b> attempt ${inspection.attempt_no} — ${inspection.status}</span>`;
+    root.appendChild(header);
+  }
+
+  const readings = {};
+  if (inspection) {
+    for (const r of (inspection.readings || [])) readings[r.parameter.code] = r;
+  }
+
+  const bySection = {};
+  for (const param of (window.fiParameters || [])) {
+    (bySection[param.section] = bySection[param.section] || []).push(param);
+  }
+
+  for (const [section, params] of Object.entries(bySection)) {
+    const group = document.createElement('div');
+    group.className = 'rounded-lg border border-slate-200 p-3 mb-2';
+    const title = document.createElement('div');
+    title.className = 'font-bold text-slate-900 mb-2 flex items-center gap-2';
+    title.innerHTML = `<span class="material-symbols-outlined text-primary">list</span>${section}`;
+    group.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid grid-cols-2 gap-2';
+    for (const param of params) {
+      const card = document.createElement('div');
+      card.className = 'p-2 border border-slate-200 rounded-lg relative';
+      const reading = readings[param.code];
+      const value = reading ? reading.value : '';
+      const result = reading ? reading.result : 'NA';
+
+      const label = document.createElement('label');
+      label.className = 'text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1';
+      label.textContent = param.name;
+
+      const input = document.createElement('input');
+      input.type = param.input_type === 'Bool' ? 'text' : (param.is_calculated ? 'text' : 'number');
+      input.disabled = param.is_calculated || !canEdit;
+      input.dataset.code = param.code;
+      input.value = value;
+      input.placeholder = specPlaceholder(param);
+      input.className = 'mt-1 w-full px-2 py-1.5 border rounded text-sm font-mono ' + (param.is_calculated ? 'bg-slate-100 text-slate-500' : 'bg-white text-slate-900');
+
+      const badge = document.createElement('span');
+      badge.className = 'absolute top-2 right-2 text-[10px] font-bold';
+      badge.innerHTML = resultBadge(result);
+
+      card.append(label, input, badge);
+      grid.appendChild(card);
+    }
+    group.appendChild(grid);
+    root.appendChild(group);
+  }
+
+  if (!inspection) return;
+
+  const missing = inspection.missing || [];
+  if (missing.length) {
+    const warn = document.createElement('div');
+    warn.className = 'mt-2 p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm';
+    warn.innerHTML = `<span class="material-symbols-outlined text-xs mr-1">warning</span>Missing: ${missing.join(', ')}`;
+    root.appendChild(warn);
+  }
+
+  document.getElementById('btn-save').disabled = !canEdit;
+  document.getElementById('btn-complete').disabled = !canEdit || missing.length > 0;
+}
+
+async function lookupAssembly() {
+  const serial = document.getElementById('serial').value.trim();
+  if (!serial) { showToast('Enter a serial first', 'warning'); return; }
+  try {
+    const res = await fetch('/api/final-inspection/assembly-lookup/' + encodeURIComponent(serial) + '/');
+    if (!res.ok) { showToast(res.status === 404 ? 'Motor assembly not found' : 'Lookup failed', 'error'); return; }
+    const data = await res.json();
+    document.getElementById('serial').value = data.motor_serial || serial;
+    document.getElementById('stator_serial').value = data.stator_serial || '';
+    document.getElementById('rotor_serial').value = data.rotor_serial || '';
+  } catch (err) {
+    showToast('Lookup failed', 'error');
+  }
+}
+
+async function loadDraft() {
+  const { motor_serial } = headerValues();
+  if (!motor_serial) { showToast('Motor serial is required', 'warning'); return; }
+  try {
+    const url = '/api/final-inspection/by-serial/' + encodeURIComponent(motor_serial) + '/' +
+      (document.getElementById('attempt').value ? '?attempt_no=' + document.getElementById('attempt').value : '');
+    const res = await fetch(url);
+    if (!res.ok) { showToast('Unable to load inspection', 'error'); return; }
+    const data = await res.json();
+    if (!data.found) {
+      showToast('No inspection found for this serial', 'info');
+      renderEditor(null);
+      return;
+    }
+    document.getElementById('enc_no').value = data.enc_no || '';
+    document.getElementById('stator_serial').value = data.stator_serial || '';
+    document.getElementById('rotor_serial').value = data.rotor_serial || '';
+    document.getElementById('magnet_type').value = data.magnet_type || '';
+    document.getElementById('pcb_board').value = data.pcb_board || '';
+    document.getElementById('remarks').value = data.remarks || '';
+    document.getElementById('attempt').value = data.attempt_no || 1;
+    renderEditor(data);
+  } catch (err) {
+    showToast('Unable to load inspection', 'error');
+  }
+}
+
+function collectReadings() {
+  const readings = [];
+  for (const el of document.querySelectorAll('#editor-root input[data-code]')) {
+    if (el.disabled) continue;
+    readings.push({ parameter: el.dataset.code, value: el.value });
+  }
+  return readings;
+}
+
+async function saveReadings() {
+  const header = headerValues();
+  if (!header.motor_serial) { showToast('Motor serial is required', 'warning'); return; }
+  try {
+    let res;
+    if (window.fiCurrentInspection && window.fiCurrentInspection.id) {
+      res = await fetch(`/api/final-inspection/${window.fiCurrentInspection.id}/update/`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...header, readings: collectReadings() }),
+      });
+    } else {
+      res = await fetch('/api/final-inspection/', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...header, readings: collectReadings() }),
+      });
+    }
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      showToast(payload.detail || 'Save failed', 'error');
+      return;
+    }
+    const data = await res.json();
+    showToast(`Saved — ${data.overall_result || 'Draft'}`, 'success');
+    renderEditor(data);
+  } catch (err) {
+    showToast('Save failed', 'error');
+  }
+}
+
+async function completeInspection() {
+  const inspection = window.fiCurrentInspection;
+  if (!inspection || !inspection.id) { showToast('No inspection to complete', 'warning'); return; }
+  const remarks = document.getElementById('remarks').value.trim();
+  try {
+    const res = await fetch(`/api/final-inspection/${inspection.id}/complete/`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ remarks }),
+    });
+    const payload = await res.json();
+    if (!res.ok) { showToast(payload.detail || 'Complete failed', 'error'); return; }
+    showToast(`Completed — ${payload.overall_result}`, 'success');
+    renderEditor(payload);
+  } catch (err) {
+    showToast('Complete failed', 'error');
+  }
+}
+
+loadParameters();
+{% endblock %}

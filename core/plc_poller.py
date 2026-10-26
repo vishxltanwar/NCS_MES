@@ -9,7 +9,10 @@ every worker sees the same snapshot.
 """
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import json
 import logging
 import os
@@ -108,7 +111,9 @@ def _classify_scanner_buffer(value):
 
 
 def _poll_once(state):
-    client = ModbusTcpClient(
+    from core import views as _core_views
+    client_cls = getattr(_core_views, 'ModbusTcpClient', ModbusTcpClient)
+    client = client_cls(
         settings.PLC_HOST,
         port=settings.PLC_PORT,
         timeout=settings.PLC_TIMEOUT,
@@ -273,6 +278,11 @@ def get_plc_status():
     if state['updated_at'] and now - state['updated_at'] < MIN_POLL_INTERVAL:
         return state
 
+    if fcntl is None:
+        updated = _poll_once(state)
+        _write_state(updated)
+        return updated
+
     lock_handle = open(LOCK_PATH, 'a+')
     try:
         try:
@@ -299,6 +309,18 @@ def reset_plc_status():
     The raw pulse baseline is intentionally kept so the currently visible
     stack value is not treated as a new cycle on the next poll.
     """
+    if fcntl is None:
+        state = _read_state()
+        state['suppressed_magnet'] = state.get('raw_magnet')
+        state['suppressed_stack'] = state.get('raw_stack')
+        state['magnet_serial'] = None
+        state['stack_serial'] = None
+        state['cycle_complete'] = False
+        state['pass_fail'] = None
+        state['cycle_time'] = None
+        _write_state(state)
+        return
+
     lock_handle = open(LOCK_PATH, 'a+')
     try:
         fcntl.flock(lock_handle, fcntl.LOCK_EX)

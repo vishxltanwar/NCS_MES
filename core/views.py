@@ -21,10 +21,17 @@ from rest_framework.response import Response
 from rest_framework import status
 import logging
 import openpyxl
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
 from django.db import DatabaseError, IntegrityError, models, transaction
+from pymodbus.client import ModbusTcpClient
+from rest_framework import status, serializers
+from .pagination import paginate_queryset
+from .plc_poller import get_plc_status, reset_plc_status
+from django.db.models.functions import RowNumber
 from django.db.models.functions import Lower, RowNumber
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -36,9 +43,14 @@ from utils.scanner import clean_scan_data
 from .plc_poller import get_plc_status, reset_plc_status
 from .models import (
     DailySerialCounter,
+    FinalInspection,
+    FinalInspectionParameter,
+    FinalInspectionReading,
     LoginThrottle,
     MagnetInsertion,
     MotorAssembly,
+    OperationRecord,
+    OP_FINAL_INSPECTION,
     Part,
     PART_TYPES,
     RotorBalancing,
@@ -57,6 +69,7 @@ from .rbac import (
     user_station,
 )
 from .pagination import paginate_queryset
+from .final_inspection_specs import CALCULATED_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +184,7 @@ def _request_part_type(data, field, *, label):
     return part_type
 
 
-def _render_page(request, template_name, active_page):
+def _render_page(request, template_name, active_page, extra_context=None):
     get_token(request)
     user = _user_ctx(request.user)
     is_station_mode = getattr(request, 'is_station_mode', False)
@@ -183,7 +196,7 @@ def _render_page(request, template_name, active_page):
         'magnet_insertion': 'Monitor and record magnet insertion',
     }
     station = user['station'] or request.session.get('station', '')
-    return render(request, f'core/{template_name}', {
+    context = {
         'user': user,
         'active_page': active_page,
         'allowed_pages': allowed_pages(request.user),
@@ -191,7 +204,10 @@ def _render_page(request, template_name, active_page):
         'base_template': 'core/base_station.html' if is_station_mode else 'core/base.html',
         'station_name': station_names.get(station, station.replace('_', ' ').title()) or 'Station Terminal',
         'current_job': request.session.get('current_job') or station_jobs.get(station, 'Production operation'),
-    })
+    }
+    if extra_context:
+        context.update(extra_context)
+    return render(request, f'core/{template_name}', context)
 
 # ── Page Views ────────────────────────────────────────────────────────────────
 
@@ -260,6 +276,64 @@ def magnet_insertion_view(request):
 @page_access_required('motor_assembly')
 def motor_assembly_view(request):
     return _render_page(request, 'motor_assembly.html', 'motor_assembly')
+
+
+@page_access_required('rotor_operations')
+def rotor_operations_view(request):
+    return _render_page(request, 'stack_and_shaft_pressing.html', 'rotor_operations')
+
+
+@page_access_required('front_plate_bearing_assy')
+def front_plate_bearing_assy_view(request):
+    return _render_page(request, 'front_plate_bearing_assy.html', 'front_plate_bearing_assy')
+
+
+@page_access_required('front_plate_rotor_assy')
+def front_plate_rotor_assy_view(request):
+    return _render_page(request, 'front_plate_rotor_assy.html', 'front_plate_rotor_assy')
+
+
+@page_access_required('eol_testing')
+def eol_testing_view(request):
+    return _render_page(request, 'eol_testing.html', 'eol_testing')
+
+
+@page_access_required('final_inspection')
+def final_inspection_view(request):
+    return _render_page(request, 'final_inspection.html', 'final_inspection')
+
+
+@page_access_required('final_inspection')
+def final_inspection_records_view(request):
+    return _render_page(request, 'final_inspection_records.html', 'final_inspection')
+
+
+@page_access_required('final_inspection')
+def final_inspection_record_detail_view(request, pk):
+    return _render_page(request, 'final_inspection_record_detail.html', 'final_inspection', {'inspection_id': pk})
+
+
+@page_access_required('dispatch_release')
+def dispatch_release_view(request):
+    return _render_page(request, 'dispatch_release.html', 'dispatch_release')
+
+
+@page_access_required('final_testing')
+def eol_testing_4q_view(request):
+    """Separate 4Q final test from the generic EOL page."""
+    return _render_page(request, '4q_testing.html', '4q_testing')
+
+
+@page_access_required('pre_delivery_inspection')
+def pre_delivery_inspection_view(request):
+    """Pre-delivery inspection gate — final check before dispatch."""
+    return _render_page(request, 'pre_delivery_inspection.html', 'pre_delivery_inspection')
+
+
+@page_access_required('noise')
+def noise_test_view(request):
+    """Distinct acoustic noise acceptance test page."""
+    return _render_page(request, 'noise_test.html', 'noise')
 
 
 def _user_ctx(user):
@@ -2254,6 +2328,338 @@ def api_magnet_insertion_delete(request, pk):
     }, status=409)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# OPERATION GATES API
+# ══════════════════════════════════════════════════════════════════════════════
+
+from .rbac import can_access_action
+
+OPERATION_CODES_BY_ENTITY = {
+    'rotor': {
+        'MAGNET_INSERTION', 'YOKE_SHAFT_PRESSING', 'ROTOR_BALANCING',
+        'ROTOR_OP70', 'ROTOR_OP80', 'ROTOR_RELEASE',
+    },
+    'stator': {'STATOR_OP120', 'STATOR_RELEASE'},
+    'motor': {
+        'MOTOR_OP10', 'MOTOR_OP70', 'MOTOR_OP90', 'MOTOR_OP100',
+        'MOTOR_SERIAL_ASSIGN', 'MOTOR_OP120', 'FINAL_INSPECTION', 'DISPATCH_RELEASE',
+    },
+}
+
+PREREQUISITES = {
+    'YOKE_SHAFT_PRESSING': ['MAGNET_INSERTION'],
+    'ROTOR_BALANCING': ['YOKE_SHAFT_PRESSING'],
+    'ROTOR_OP70': ['ROTOR_BALANCING'],
+    'ROTOR_OP80': ['ROTOR_OP70'],
+    'ROTOR_RELEASE': ['ROTOR_OP80'],
+    'STATOR_RELEASE': ['STATOR_OP120'],
+    'MOTOR_OP70': ['MOTOR_OP10'],
+    'MOTOR_OP90': ['MOTOR_OP70'],
+    'MOTOR_OP100': ['MOTOR_OP90'],
+    'MOTOR_SERIAL_ASSIGN': ['MOTOR_OP100'],
+    'MOTOR_OP120': ['MOTOR_SERIAL_ASSIGN'],
+    'FINAL_INSPECTION': ['MOTOR_OP120'],
+    'DISPATCH_RELEASE': ['FINAL_INSPECTION'],
+}
+
+OP_WRITE_ACTION = {
+    'MAGNET_INSERTION': 'magnet_write',
+    'YOKE_SHAFT_PRESSING': 'yoke_shaft_write',
+    'ROTOR_BALANCING': 'rotor_write',
+    'ROTOR_OP70': 'rotor_op70_write',
+    'ROTOR_OP80': 'rotor_op80_write',
+    'ROTOR_RELEASE': 'rotor_release_write',
+    'STATOR_OP120': 'stator_op120_write',
+    'STATOR_RELEASE': 'stator_release_write',
+    'MOTOR_OP10': 'motor_op10_write',
+    'MOTOR_OP70': 'motor_op70_write',
+    'MOTOR_OP90': 'motor_op90_write',
+    'MOTOR_OP100': 'motor_op100_write',
+    'MOTOR_SERIAL_ASSIGN': 'motor_serial_assign_write',
+    'MOTOR_OP120': 'motor_op120_write',
+    'FINAL_INSPECTION': 'final_inspection_write',
+    'DISPATCH_RELEASE': 'dispatch_write',
+}
+
+
+def _completed_ops(entity_type, serial):
+    return set(
+        OperationRecord.objects.filter(
+            entity_type=entity_type,
+            serial_number__iexact=serial,
+            status='Completed',
+        ).values_list('operation_code', flat=True)
+    )
+
+
+def _missing_prereqs(entity_type, serial, operation_code):
+    missing = []
+    for prereq in PREREQUISITES.get(operation_code, []):
+        if prereq not in _completed_ops(entity_type, serial):
+            missing.append(prereq)
+    # Cross-entity checks for motor OP10: rotor + stator released
+    if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+        # serial here is motor assembly id context; rotor/stator passed via data
+        pass
+    return missing
+
+
+@api_view(['GET'])
+def api_operations_list(request):
+    entity_type = request.query_params.get('entity_type', '').strip()
+    serial = request.query_params.get('serial', '').strip()
+    qs = OperationRecord.objects.all()
+    if entity_type:
+        qs = qs.filter(entity_type=entity_type)
+    if serial:
+        qs = qs.filter(serial_number__iexact=serial)
+    items, meta = paginate_queryset(qs, request, default_page_size=50, max_page_size=200)
+    data = []
+    for r in items:
+        data.append({
+            'id': r.id,
+            'entity_type': r.entity_type,
+            'serial_number': r.serial_number,
+            'operation_code': r.operation_code,
+            'status': r.status,
+            'result': r.result,
+            'recorded_at': r.recorded_at.astimezone(IST).isoformat() if r.recorded_at else '',
+            'operator': r.operator.get_full_name() if r.operator else '',
+            'notes': r.notes,
+            'data': r.data,
+            'created_at': r.created_at.astimezone(IST).isoformat() if r.created_at else '',
+        })
+    return Response({'results': data, **meta})
+
+
+@api_view(['GET'])
+def api_operations_by_serial(request, entity_type, serial):
+    serial = serial.strip()
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if not serial:
+        return Response({'detail': 'Serial is required'}, status=400)
+    records = OperationRecord.objects.filter(
+        entity_type=entity_type, serial_number__iexact=serial
+    ).order_by('-created_at')
+    completed = _completed_ops(entity_type, serial)
+    allowed_next = []
+    for code in OPERATION_CODES_BY_ENTITY[entity_type]:
+        if code in completed:
+            continue
+        if not _missing_prereqs(entity_type, serial, code):
+            allowed_next.append(code)
+    return Response({
+        'entity_type': entity_type,
+        'serial_number': serial,
+        'completed': sorted(completed),
+        'allowed_next': allowed_next,
+        'records': [
+            {
+                'id': r.id,
+                'operation_code': r.operation_code,
+                'status': r.status,
+                'result': r.result,
+                'recorded_at': r.recorded_at.astimezone(IST).isoformat() if r.recorded_at else '',
+                'operator': r.operator.get_full_name() if r.operator else '',
+                'notes': r.notes,
+                'data': r.data,
+            } for r in records
+        ],
+    })
+
+
+@api_view(['POST'])
+def api_operation_check_sequence(request):
+    try:
+        entity_type = _request_text(request.data, 'entity_type', max_length=10)
+        serial = _request_text(request.data, 'serial_number', max_length=64, upper=True)
+        operation_code = _request_text(request.data, 'operation_code', max_length=40, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if operation_code not in OPERATION_CODES_BY_ENTITY[entity_type]:
+        return Response({'detail': 'Invalid operation code for entity type'}, status=400)
+    completed = _completed_ops(entity_type, serial)
+    if operation_code in completed:
+        return Response({'allowed': False, 'reason': 'Operation already completed', 'missing': []})
+    missing = _missing_prereqs(entity_type, serial, operation_code)
+    # Cross-entity checks for motor OP10
+    extra_missing = []
+    if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+        rotor_serial = request.data.get('rotor_serial', '')
+        stator_serial = request.data.get('stator_serial', '')
+        if isinstance(rotor_serial, str):
+            rotor_serial = rotor_serial.strip().upper()
+        if isinstance(stator_serial, str):
+            stator_serial = stator_serial.strip().upper()
+        if not rotor_serial or 'ROTOR_RELEASE' not in _completed_ops('rotor', rotor_serial):
+            extra_missing.append('Rotor not released')
+        if not stator_serial or 'STATOR_RELEASE' not in _completed_ops('stator', stator_serial):
+            extra_missing.append('Stator not released')
+    all_missing = missing + extra_missing
+    return Response({'allowed': not all_missing, 'missing': all_missing})
+
+
+@api_view(['POST'])
+def api_operation_record(request):
+    try:
+        entity_type = _request_text(request.data, 'entity_type', max_length=10)
+        serial_number = _request_text(request.data, 'serial_number', label='Serial number', max_length=64, upper=True)
+        operation_code = _request_text(request.data, 'operation_code', label='Operation code', max_length=40, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if operation_code not in OPERATION_CODES_BY_ENTITY[entity_type]:
+        return Response({'detail': 'Invalid operation code for entity type'}, status=400)
+
+    action = OP_WRITE_ACTION.get(operation_code)
+    if not action or not can_access_action(request.user, action):
+        return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+
+    status_val = request.data.get('status', 'Completed')
+    if status_val not in ('Completed', 'Failed'):
+        status_val = 'Completed'
+    result_val = request.data.get('result', '')
+    if not isinstance(result_val, str):
+        result_val = str(result_val)
+    result_val = result_val.strip()[:10]
+    notes = request.data.get('notes', '')
+    if not isinstance(notes, str):
+        notes = str(notes)
+    notes = notes.strip()[:255]
+    data = request.data.get('data', {})
+    if not isinstance(data, dict):
+        data = {}
+
+    # Prereq check (only for completion)
+    if status_val == 'Completed':
+        missing = _missing_prereqs(entity_type, serial_number, operation_code)
+        extra_missing = []
+        if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+            rotor_serial = data.get('rotor_serial') or request.data.get('rotor_serial', '')
+            stator_serial = data.get('stator_serial') or request.data.get('stator_serial', '')
+            if isinstance(rotor_serial, str):
+                rotor_serial = rotor_serial.strip().upper()
+            else:
+                rotor_serial = ''
+            if isinstance(stator_serial, str):
+                stator_serial = stator_serial.strip().upper()
+            else:
+                stator_serial = ''
+            # Require an existing motor assembly link for this (temp) serial
+            link = MotorAssembly.objects.filter(motor_serial__iexact=serial_number).first()
+            if not link:
+                extra_missing.append('Motor assembly link required')
+            else:
+                if not rotor_serial:
+                    rotor_serial = link.rotor_serial
+                if not stator_serial:
+                    stator_serial = link.stator_serial
+            if not rotor_serial or 'ROTOR_RELEASE' not in _completed_ops('rotor', rotor_serial):
+                extra_missing.append('Rotor not released')
+            if not stator_serial or 'STATOR_RELEASE' not in _completed_ops('stator', stator_serial):
+                extra_missing.append('Stator not released')
+            data = {**data, 'rotor_serial': rotor_serial, 'stator_serial': stator_serial}
+        all_missing = missing + extra_missing
+        if all_missing:
+            return Response({'detail': 'Prerequisites not met', 'missing': all_missing}, status=400)
+
+        # Motor serial assignment handling
+        if operation_code == 'MOTOR_SERIAL_ASSIGN':
+            final_serial = data.get('final_motor_serial') or request.data.get('final_motor_serial', '')
+            if not isinstance(final_serial, str) or not final_serial.strip():
+                return Response({'detail': 'final_motor_serial is required'}, status=400)
+            final_serial = final_serial.strip().upper()
+            link = MotorAssembly.objects.filter(motor_serial__iexact=serial_number).first()
+            if not link:
+                return Response({'detail': 'Motor assembly link not found'}, status=404)
+            if link.final_motor_serial:
+                return Response({'detail': 'Motor serial already assigned'}, status=409)
+            if MotorAssembly.objects.filter(final_motor_serial__iexact=final_serial).exists():
+                return Response({'detail': 'Final motor serial already in use'}, status=409)
+            link.final_motor_serial = final_serial
+            link.motor_serial_assigned_at = django_tz.now()
+            link.save(update_fields=['final_motor_serial', 'motor_serial_assigned_at'])
+            data = {**data, 'final_motor_serial': final_serial}
+
+    # Idempotency: if already completed, return existing
+    existing = OperationRecord.objects.filter(
+        entity_type=entity_type,
+        serial_number__iexact=serial_number,
+        operation_code=operation_code,
+        status='Completed',
+    ).first()
+    if existing and status_val == 'Completed':
+        return Response({
+            'id': existing.id,
+            'entity_type': existing.entity_type,
+            'serial_number': existing.serial_number,
+            'operation_code': existing.operation_code,
+            'status': existing.status,
+            'duplicate': True,
+        })
+
+    operator = request.user if request.user.is_authenticated else None
+    record = OperationRecord.objects.create(
+        entity_type=entity_type,
+        serial_number=serial_number,
+        operation_code=operation_code,
+        status=status_val,
+        result=result_val,
+        recorded_at=django_tz.now() if status_val == 'Completed' else None,
+        operator=operator,
+        notes=notes,
+        data=data,
+    )
+    return Response({
+        'id': record.id,
+        'entity_type': record.entity_type,
+        'serial_number': record.serial_number,
+        'operation_code': record.operation_code,
+        'status': record.status,
+        'result': record.result,
+    }, status=201)
+
+
+@api_view(['POST'])
+def api_motor_serial_assign(request, pk):
+    # Convenience endpoint wrapping operation record for motor serial assignment
+    try:
+        link = MotorAssembly.objects.get(pk=pk)
+    except MotorAssembly.DoesNotExist:
+        return Response({'detail': 'Motor assembly not found'}, status=404)
+    if not can_access_action(request.user, 'motor_serial_assign_write'):
+        return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+    final_serial = request.data.get('final_motor_serial', '')
+    if not isinstance(final_serial, str) or not final_serial.strip():
+        return Response({'detail': 'final_motor_serial is required'}, status=400)
+    final_serial = final_serial.strip().upper()
+    if link.final_motor_serial:
+        return Response({'detail': 'Motor serial already assigned'}, status=409)
+    if MotorAssembly.objects.filter(final_motor_serial__iexact=final_serial).exists():
+        return Response({'detail': 'Final motor serial already in use'}, status=409)
+    # Prereq: motor OP100 completed
+    if 'MOTOR_OP100' not in _completed_ops('motor', link.motor_serial):
+        return Response({'detail': 'Prerequisites not met', 'missing': ['MOTOR_OP100']}, status=400)
+    link.final_motor_serial = final_serial
+    link.motor_serial_assigned_at = django_tz.now()
+    link.save(update_fields=['final_motor_serial', 'motor_serial_assigned_at'])
+    OperationRecord.objects.create(
+        entity_type='motor',
+        serial_number=link.motor_serial,
+        operation_code='MOTOR_SERIAL_ASSIGN',
+        status='Completed',
+        result='Pass',
+        recorded_at=django_tz.now(),
+        operator=request.user if request.user.is_authenticated else None,
+        data={'final_motor_serial': final_serial},
+    )
+    return Response({'motor_serial': link.motor_serial, 'final_motor_serial': final_serial}, status=201)
+
 @api_view(['GET'])
 @api_access_required('magnet_read')
 def api_magnet_insertion_status(request):
@@ -2265,7 +2671,6 @@ def api_magnet_insertion_status(request):
             'connected': False,
             'error': 'PLC unavailable',
         }, status=503)
-
     return Response({
         'connected': bool(state.get('connected')),
         'magnet_serial': state.get('magnet_serial'),
@@ -2275,3 +2680,752 @@ def api_magnet_insertion_status(request):
         'cycle_time': state.get('cycle_time'),
         'cycle_id': state.get('cycle_id', 0),
     })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FINAL INSPECTION API
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _active_parameters():
+    return list(FinalInspectionParameter.objects.filter(active=True).order_by('sort_order', 'id'))
+
+
+def _serialize_parameter(parameter):
+    return {
+        'code': parameter.code,
+        'name': parameter.name,
+        'section': parameter.section,
+        'unit': parameter.unit,
+        'spec_min': parameter.spec_min,
+        'spec_max': parameter.spec_max,
+        'spec_text': parameter.spec_text,
+        'input_type': parameter.input_type,
+        'is_calculated': parameter.is_calculated,
+        'sort_order': parameter.sort_order,
+    }
+
+
+def _to_float(raw):
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fmt_number(value):
+    text = f'{value:.6f}'.rstrip('0').rstrip('.')
+    return text or '0'
+
+
+def _calculated_updates(values):
+    updates = {}
+    if 'ENC_ANGLE_RAD' in values:
+        radians = _to_float(values.get('ENC_ANGLE_RAD'))
+        if radians is None:
+            updates['ENC_ANGLE_DEG'] = ''
+            updates['ENC_ANGLE_VALUE'] = ''
+        else:
+            degrees = math.degrees(radians) % 360
+            updates['ENC_ANGLE_DEG'] = _fmt_number(degrees)
+            updates['ENC_ANGLE_VALUE'] = str(int(round(degrees * 10)))
+    if 'THERMISTOR1' in values or 'THERMISTOR2' in values:
+        t1 = _to_float(values.get('THERMISTOR1'))
+        t2 = _to_float(values.get('THERMISTOR2'))
+        if t1 in (None, 0) or t2 is None:
+            updates['THERMISTOR_MISMATCH'] = ''
+        else:
+            updates['THERMISTOR_MISMATCH'] = _fmt_number((t2 - t1) / t1 * 100)
+    return updates
+
+
+def _reading_payload(reading):
+    parameter = reading.parameter
+    return {
+        'parameter': parameter.code,
+        'code': parameter.code,
+        'section': parameter.section,
+        'name': parameter.name,
+        'unit': parameter.unit,
+        'spec_min': parameter.spec_min,
+        'spec_max': parameter.spec_max,
+        'spec_text': parameter.spec_text,
+        'input_type': parameter.input_type,
+        'is_calculated': parameter.is_calculated,
+        'sort_order': parameter.sort_order,
+        'value': reading.value,
+        'result': reading.result,
+    }
+
+
+def _readings_payload(inspection):
+    readings = {}
+    if inspection is not None and inspection.pk:
+        readings = {r.parameter.code: r for r in inspection.readings.select_related('parameter').all()}
+    payload = []
+    for parameter in _active_parameters():
+        reading = readings.get(parameter.code)
+        if reading:
+            payload.append(_reading_payload(reading))
+        else:
+            payload.append({
+                'parameter': parameter.code,
+                'code': parameter.code,
+                'section': parameter.section,
+                'name': parameter.name,
+                'unit': parameter.unit,
+                'spec_min': parameter.spec_min,
+                'spec_max': parameter.spec_max,
+                'spec_text': parameter.spec_text,
+                'input_type': parameter.input_type,
+                'is_calculated': parameter.is_calculated,
+                'sort_order': parameter.sort_order,
+                'value': '',
+                'result': 'NA',
+            })
+    return payload
+
+
+def _incomplete_missing(inspection):
+    """Names of active parameters that are unfilled or still NA."""
+    readings = {
+        r.parameter.code: r
+        for r in inspection.readings.select_related('parameter').all()
+    }
+    missing = []
+    for parameter in _active_parameters():
+        reading = readings.get(parameter.code)
+        if reading is None or not str(reading.value or '').strip() or reading.result == 'NA':
+            missing.append(parameter.name)
+    return missing
+
+
+def _compute_overall(inspection):
+    any_fail = inspection.readings.filter(result='Fail').exists()
+    if any_fail:
+        return 'Fail'
+    if inspection.readings.filter(result='Pass').exists():
+        return 'Pass'
+    return 'NA'
+
+
+def _upsert_readings(inspection, readings_data):
+    incoming = {}
+    for entry in readings_data or []:
+        code = str(entry.get('parameter') or entry.get('code') or '').strip().upper()
+        if not code:
+            continue
+        raw = entry.get('value')
+        incoming[code] = '' if raw is None else str(raw).strip()
+
+    incoming = {code: value for code, value in incoming.items() if code not in CALCULATED_CODES}
+    parameters = {p.code: p for p in _active_parameters()}
+    unknown = sorted(set(incoming) - set(parameters))
+    if unknown:
+        raise ValueError(f'Unknown parameter code(s): {", ".join(unknown)}')
+
+    current = {r.parameter.code: r.value for r in inspection.readings.select_related('parameter').all()}
+    current.update(incoming)
+    calculated = _calculated_updates(current)
+
+    targets = {**incoming, **calculated}
+    for code, value in targets.items():
+        parameter = parameters.get(code)
+        if parameter is None:
+            continue
+        FinalInspectionReading.objects.update_or_create(
+            final_inspection=inspection,
+            parameter=parameter,
+            defaults={'value': value, 'result': _spec_check(parameter, value)},
+        )
+
+    inspection.overall_result = _compute_overall(inspection)
+    inspection.save(update_fields=['overall_result'])
+    return inspection
+
+
+def _filter_inspections(request):
+    qs = FinalInspection.objects.all().annotate(
+        rotor_result=models.Subquery(
+            RotorBalancing.objects
+            .filter(serial_number__iexact=models.OuterRef('motor_serial'))
+            .order_by('-attempt_no', '-recorded_at', '-imported_at')
+            .values('result')[:1],
+            output_field=models.CharField(),
+        ),
+        stator_result=models.Subquery(
+            StatorTestingRecord.objects
+            .filter(serial_number__iexact=models.OuterRef('motor_serial'))
+            .order_by('-imported_at').values('final_result')[:1],
+            output_field=models.CharField(),
+        ),
+    ).select_related('inspector')
+
+    params = request.query_params
+    search = params.get('search', '').strip()
+    if search:
+        qs = qs.filter(
+            models.Q(motor_serial__icontains=search)
+            | models.Q(enc_no__icontains=search)
+            | models.Q(stator_serial__icontains=search)
+            | models.Q(rotor_serial__icontains=search)
+        )
+    motor = params.get('motor_serial', '').strip()
+    enc = params.get('enc_no', '').strip()
+    stator = params.get('stator_serial', '').strip()
+    rotor = params.get('rotor_serial', '').strip()
+    inspector = params.get('inspector', '').strip()
+    status = params.get('status', '').strip()
+    overall = params.get('overall', '').strip() or params.get('result', '').strip()
+    if motor:
+        qs = qs.filter(motor_serial__icontains=motor)
+    if enc:
+        qs = qs.filter(enc_no__icontains=enc)
+    if stator:
+        qs = qs.filter(stator_serial__icontains=stator)
+    if rotor:
+        qs = qs.filter(rotor_serial__icontains=rotor)
+    if inspector:
+        qs = qs.filter(
+            models.Q(inspector__username__icontains=inspector)
+            | models.Q(inspector__first_name__icontains=inspector)
+            | models.Q(inspector__last_name__icontains=inspector)
+        )
+    if status:
+        qs = qs.filter(status=status)
+    if overall:
+        qs = qs.filter(overall_result=overall)
+
+    start = params.get('start_date', '')
+    end = params.get('end_date', '')
+    if start:
+        try:
+            qs = qs.filter(inspected_at__date__gte=date.fromisoformat(start))
+        except ValueError:
+            pass
+    if end:
+        try:
+            qs = qs.filter(inspected_at__date__lte=date.fromisoformat(end))
+        except ValueError:
+            pass
+
+    sort_map = {
+        'inspected_at': 'inspected_at',
+        'motor_serial': 'motor_serial',
+        'enc_no': 'enc_no',
+        'stator_serial': 'stator_serial',
+        'rotor_serial': 'rotor_serial',
+        'attempt_no': 'attempt_no',
+        'status': 'status',
+        'overall_result': 'overall_result',
+        'inspector': 'inspector__username',
+    }
+    sort = sort_map.get(params.get('sort', 'inspected_at'), 'inspected_at')
+    if params.get('order', 'desc').lower() == 'asc':
+        qs = qs.order_by(sort, 'id')
+    else:
+        qs = qs.order_by(f'-{sort}', '-id')
+    return qs
+
+
+def _inspection_list_payload(inspection):
+    return {
+        'id': inspection.id,
+        'motor_serial': inspection.motor_serial,
+        'assembly_temp_id': inspection.assembly_temp_id or '',
+        'enc_no': inspection.enc_no,
+        'stator_serial': inspection.stator_serial,
+        'rotor_serial': inspection.rotor_serial,
+        'magnet_type': inspection.magnet_type or '',
+        'pcb_board': inspection.pcb_board or '',
+        'inspector': inspection.inspector.get_full_name() if inspection.inspector else '',
+        'inspected_at': inspection.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+        'attempt_no': inspection.attempt_no,
+        'status': inspection.status,
+        'overall_result': inspection.overall_result,
+        'remarks': inspection.remarks or '',
+        'completed_at': inspection.completed_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.completed_at else '',
+        'rotor_result': inspection.rotor_result if inspection.rotor_result else ('—' if inspection.rotor_result is None else str(inspection.rotor_result)),
+        'stator_result': inspection.stator_result if inspection.stator_result else ('—' if inspection.stator_result is None else str(inspection.stator_result)),
+    }
+
+
+@api_view(['GET', 'POST'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_list(request):
+    if request.method == 'POST':
+        if not can_access_action(request.user, 'final_inspection_write'):
+            return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+        try:
+            motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+        if not motor_serial:
+            return Response({'detail': 'Motor Sr No is required'}, status=400)
+
+        attempt_no = None
+        raw_attempt = request.data.get('attempt_no')
+        if raw_attempt not in (None, ''):
+            try:
+                attempt_no = int(raw_attempt)
+            except (TypeError, ValueError):
+                return Response({'detail': 'Attempt No must be a number'}, status=400)
+            if attempt_no < 1:
+                return Response({'detail': 'Attempt No must be at least 1'}, status=400)
+
+        actor = request.user if request.user.is_authenticated else None
+        readings_data = request.data.get('readings', [])
+        if not isinstance(readings_data, list):
+            return Response({'detail': 'readings must be a list'}, status=400)
+
+        try:
+            with transaction.atomic():
+                instance = None
+                if attempt_no is not None:
+                    instance = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial, attempt_no=attempt_no,
+                    ).first()
+                else:
+                    instance = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial, status='Draft',
+                    ).order_by('-attempt_no').first()
+                    if instance is None:
+                        maximum = FinalInspection.objects.filter(
+                            motor_serial__iexact=motor_serial,
+                        ).aggregate(m=models.Max('attempt_no'))['m'] or 0
+                        attempt_no = maximum + 1
+
+                if instance is None:
+                    instance = FinalInspection.objects.create(
+                        motor_serial=motor_serial,
+                        attempt_no=attempt_no or 1,
+                        inspector=actor,
+                    )
+                elif instance.status != 'Draft':
+                    return Response({'detail': 'Final inspection already completed'}, status=409)
+
+                _apply_header_fields(instance, request.data)
+                instance.save()
+                _upsert_readings(instance, readings_data)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        data = _inspection_detail_payload(instance)
+        return Response(data, status=201)
+
+    qs = _filter_inspections(request)
+    items, meta = paginate_queryset(qs, request, default_page_size=50, max_page_size=200)
+    return Response({'results': [_inspection_list_payload(i) for i in items], **meta})
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_parameters(request):
+    return Response({'parameters': [_serialize_parameter(p) for p in _active_parameters()]})
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_assembly_lookup(request, serial):
+    serial = str(serial).strip()
+    link = MotorAssembly.objects.filter(
+        models.Q(motor_serial__iexact=serial) | models.Q(final_motor_serial__iexact=serial)
+    ).first()
+    if link is None:
+        return Response({'detail': 'Motor assembly not found', 'code': 'not_found'}, status=404)
+    return Response({
+        'assembly_temp_id': link.motor_serial,
+        'motor_serial': link.final_motor_serial or link.motor_serial,
+        'stator_serial': link.stator_serial,
+        'rotor_serial': link.rotor_serial,
+    })
+
+
+def _inspection_detail_payload(inspection):
+    return {
+        'id': inspection.id,
+        'motor_serial': inspection.motor_serial,
+        'assembly_temp_id': inspection.assembly_temp_id or '',
+        'enc_no': inspection.enc_no,
+        'stator_serial': inspection.stator_serial,
+        'rotor_serial': inspection.rotor_serial,
+        'magnet_type': inspection.magnet_type or '',
+        'pcb_board': inspection.pcb_board or '',
+        'inspector': inspection.inspector.get_full_name() if inspection.inspector else '',
+        'inspected_at': inspection.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+        'attempt_no': inspection.attempt_no,
+        'status': inspection.status,
+        'overall_result': inspection.overall_result,
+        'remarks': inspection.remarks or '',
+        'completed_at': inspection.completed_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.completed_at else '',
+        'readings': _readings_payload(inspection),
+        'missing': _incomplete_missing(inspection),
+        'operation_completed': OP_FINAL_INSPECTION in set(
+            OperationRecord.objects.filter(
+                entity_type='motor', serial_number__iexact=inspection.motor_serial,
+                status='Completed',
+            ).values_list('operation_code', flat=True)
+        ),
+    }
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_by_serial(request, serial):
+    serial = str(serial).strip()
+    qs = FinalInspection.objects.filter(motor_serial__iexact=serial)
+    attempt = request.query_params.get('attempt_no', '').strip()
+    if attempt:
+        try:
+            qs = qs.filter(attempt_no=int(attempt))
+        except ValueError:
+            pass
+    inspection = qs.order_by('-attempt_no', '-inspected_at').first()
+    if not inspection:
+        return Response({
+            'found': False,
+            'motor_serial': serial.upper(),
+            'readings': _readings_payload(FinalInspection(motor_serial=serial)),
+            'missing': [p.name for p in _active_parameters()],
+        })
+    data = _inspection_detail_payload(inspection)
+    data['found'] = True
+    return Response(data)
+
+
+def _apply_header_fields(instance, data):
+    text_fields = (
+        ('assembly_temp_id', 32, True),
+        ('enc_no', 32, True),
+        ('stator_serial', 32, True),
+        ('rotor_serial', 32, True),
+        ('magnet_type', 64, False),
+        ('pcb_board', 64, False),
+        ('remarks', 255, False),
+    )
+    for field, max_length, upper in text_fields:
+        if field in data:
+            setattr(instance, field, _request_text(
+                data, field, label=field.replace('_', ' ').title(),
+                max_length=max_length, upper=upper,
+            ))
+    return instance
+
+
+@api_view(['POST'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_create(request):
+    try:
+        motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    if not motor_serial:
+        return Response({'detail': 'Motor Sr No is required'}, status=400)
+
+    attempt_no = None
+    raw_attempt = request.data.get('attempt_no')
+    if raw_attempt not in (None, ''):
+        try:
+            attempt_no = int(raw_attempt)
+        except (TypeError, ValueError):
+            return Response({'detail': 'Attempt No must be a number'}, status=400)
+        if attempt_no < 1:
+            return Response({'detail': 'Attempt No must be at least 1'}, status=400)
+
+    actor = request.user if request.user.is_authenticated else None
+    readings_data = request.data.get('readings', [])
+    if not isinstance(readings_data, list):
+        return Response({'detail': 'readings must be a list'}, status=400)
+
+    try:
+        with transaction.atomic():
+            instance = None
+            if attempt_no is not None:
+                instance = FinalInspection.objects.filter(
+                    motor_serial__iexact=motor_serial, attempt_no=attempt_no,
+                ).first()
+            else:
+                instance = FinalInspection.objects.filter(
+                    motor_serial__iexact=motor_serial, status='Draft',
+                ).order_by('-attempt_no').first()
+                if instance is None:
+                    maximum = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial,
+                    ).aggregate(m=models.Max('attempt_no'))['m'] or 0
+                    attempt_no = maximum + 1
+
+            if instance is None:
+                instance = FinalInspection.objects.create(
+                    motor_serial=motor_serial,
+                    attempt_no=attempt_no or 1,
+                    inspector=actor,
+                )
+            elif instance.status != 'Draft':
+                return Response({'detail': 'Final inspection already completed'}, status=409)
+
+            _apply_header_fields(instance, request.data)
+            instance.save()
+            _upsert_readings(instance, readings_data)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    data = _inspection_detail_payload(instance)
+    return Response(data, status=201)
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_detail(request, pk):
+    try:
+        instance = FinalInspection.objects.select_related('inspector').get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+    data = _inspection_detail_payload(instance)
+    data['found'] = True
+    return Response(data)
+
+
+@api_view(['PUT', 'PATCH'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_update(request, pk):
+    try:
+        instance = FinalInspection.objects.get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+    if instance.status != 'Draft':
+        return Response({'detail': 'Only Draft inspections may be edited.'}, status=409)
+
+    readings_data = request.data.get('readings', [])
+    if not isinstance(readings_data, list):
+        return Response({'detail': 'readings must be a list'}, status=400)
+
+    try:
+        with transaction.atomic():
+            _apply_header_fields(instance, request.data)
+            instance.save()
+            _upsert_readings(instance, readings_data)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    data = _inspection_detail_payload(instance)
+    return Response(data)
+
+
+@api_view(['POST'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_complete(request, pk):
+    """Complete a Draft inspection and fire FINAL_INSPECTION operation gate."""
+    with transaction.atomic():
+        try:
+            instance = FinalInspection.objects.select_for_update().get(pk=pk)
+        except FinalInspection.DoesNotExist:
+            return Response({'detail': 'Final inspection not found'}, status=404)
+        if instance.status == 'Completed':
+            return Response({'detail': 'Final inspection already completed'}, status=409)
+
+        if 'remarks' in request.data:
+            try:
+                instance.remarks = _request_text(
+                    request.data, 'remarks', label='Remarks', max_length=255, upper=False,
+                )
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=400)
+
+        missing = _incomplete_missing(instance)
+        if missing:
+            return Response({'detail': 'Required readings are missing', 'missing': missing[:10]}, status=400)
+
+        overall = _compute_overall(instance)
+        if overall == 'Fail' and not (instance.remarks or '').strip():
+            return Response({'detail': 'Remarks are required when the overall result is Fail'}, status=400)
+        if overall == 'NA':
+            return Response({'detail': 'Required readings are missing', 'missing': _incomplete_missing(instance)[:10]}, status=400)
+
+        now = django_tz.now()
+        instance.status = 'Completed'
+        instance.overall_result = overall
+        instance.completed_at = now
+        instance.save(update_fields=['status', 'overall_result', 'completed_at', 'remarks'])
+        actor = request.user if request.user.is_authenticated else None
+
+        gate = OperationRecord.objects.filter(
+            entity_type='motor',
+            serial_number__iexact=instance.motor_serial,
+            operation_code=OP_FINAL_INSPECTION,
+        ).order_by('-created_at').first()
+        gate_values = {
+            'status': 'Completed',
+            'result': overall,
+            'recorded_at': now,
+            'operator': actor,
+            'notes': instance.remarks or '',
+            'data': {
+                'overall_result': overall,
+                'attempt_no': instance.attempt_no,
+                'motor_serial': instance.motor_serial,
+            },
+        }
+        if gate is None:
+            OperationRecord.objects.create(
+                entity_type='motor',
+                serial_number=instance.motor_serial,
+                operation_code=OP_FINAL_INSPECTION,
+                **gate_values,
+            )
+        else:
+            for key, value in gate_values.items():
+                setattr(gate, key, value)
+            gate.save()
+
+    return Response({
+        'id': instance.id,
+        'status': instance.status,
+        'overall_result': instance.overall_result,
+    }, status=201)
+
+
+def _spec_check(parameter, raw_value):
+    """Server-side spec validation — trusted source of truth.
+
+    Empty values are NA.  Values with no configured limits pass.  Any value
+    outside the configured min/max fails; non-numeric input for a parameter
+    with limits fails.
+    """
+    raw = '' if raw_value is None else str(raw_value).strip()
+    if not raw:
+        return 'NA'
+    lower, upper = parameter.spec_min, parameter.spec_max
+    if lower is None and upper is None:
+        return 'Pass'
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 'Fail'
+    if value < 0 and lower is None:
+        return 'Fail'
+    if lower is not None and upper is not None:
+        return 'Pass' if lower <= value <= upper else 'Fail'
+    if lower is not None:
+        return 'Pass' if value >= lower else 'Fail'
+    return 'Pass' if value <= upper else 'Fail'
+
+
+def _export_columns():
+    parameters = _active_parameters()
+    headers = [
+        'S.No', 'Motor Sr No', 'Enc No', 'Stator', 'Rotor', 'Magnet Type',
+        'PCB Board', 'Inspector', 'Inspected At', 'Attempt No', 'Status',
+        'Overall Result',
+    ]
+    for parameter in parameters:
+        unit = f' ({parameter.unit})' if parameter.unit else ''
+        headers.append(f'{parameter.section} - {parameter.name}{unit}')
+    headers.append('Remarks')
+    return parameters, headers
+
+
+def _inspection_export_row(index, inspection, parameters, readings):
+    row = [
+        index,
+        inspection.motor_serial,
+        inspection.enc_no or '',
+        inspection.stator_serial or '',
+        inspection.rotor_serial or '',
+        inspection.magnet_type or '',
+        inspection.pcb_board or '',
+        inspection.inspector.get_full_name() if inspection.inspector else '',
+        inspection.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+        inspection.attempt_no,
+        inspection.status,
+        inspection.overall_result,
+    ]
+    for parameter in parameters:
+        reading = readings.get(parameter.code)
+        row.append(reading.value if reading else '')
+    row.append(inspection.remarks or '')
+    return row
+
+
+def _build_xlsx(inspections):
+    buffer = BytesIO()
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = 'Final Inspection'
+
+    parameters, headers = _export_columns()
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for index, inspection in enumerate(inspections, start=1):
+        readings = {
+            r.parameter.code: r
+            for r in inspection.readings.select_related('parameter').all()
+        }
+        sheet.append(_inspection_export_row(index, inspection, parameters, readings))
+    sheet.freeze_panes = 'A2'
+    sheet.auto_filter.ref = sheet.dimensions
+    sheet.column_dimensions['A'].width = 6
+    sheet.column_dimensions['B'].width = 20
+    for column in range(3, len(headers) + 1):
+        sheet.column_dimensions[get_column_letter(column)].width = 16
+    sheet.column_dimensions[get_column_letter(len(headers))].width = 32
+
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _export_csv(inspections):
+    import csv as csv_mod
+    parameters, headers = _export_columns()
+    buffer = BytesIO()
+    text = []
+    writer = csv_mod.writer(text)
+    writer.writerow(headers)
+    for index, inspection in enumerate(inspections, start=1):
+        readings = {
+            r.parameter.code: r
+            for r in inspection.readings.select_related('parameter').all()
+        }
+        writer.writerow(_inspection_export_row(index, inspection, parameters, readings))
+    buffer.write('\n'.join(text).encode('utf-8'))
+    return buffer.getvalue()
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_export(request, pk):
+    try:
+        inspection = FinalInspection.objects.select_related('inspector').get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+
+    fmt = request.query_params.get('format', 'xlsx').lower()
+    if fmt == 'csv':
+        buf = _export_csv([inspection])
+        return HttpResponse(buf, content_type='text/csv; charset=utf-8', headers={
+            'Content-Disposition': f'attachment; filename="final_inspection_{inspection.motor_serial}.csv"',
+        })
+    buf = _build_xlsx([inspection])
+    filename = f"final_inspection_{inspection.motor_serial}_{inspection.attempt_no}.xlsx"
+    return HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_export_list(request):
+    inspections = list(_filter_inspections(request).select_related('inspector')[:5000])
+    fmt = request.query_params.get('format', 'xlsx').lower()
+    if fmt == 'csv':
+        buf = _export_csv(inspections)
+        return HttpResponse(buf, content_type='text/csv; charset=utf-8', headers={
+            'Content-Disposition': 'attachment; filename="final_inspection_records.csv"',
+        })
+    buf = _build_xlsx(inspections)
+    return HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': 'attachment; filename="final_inspection_records.xlsx"'})

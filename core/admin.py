@@ -5,6 +5,7 @@ from .models import (
     AuditLog,
     MagnetInsertion,
     MotorAssembly,
+    OperationRecord,
     Part,
     RotorBalancing,
     Serial,
@@ -85,6 +86,14 @@ class MagnetInsertionAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin):
         return format_html(
             '<span style="background:#e74c3c;color:#fff;padding:3px 10px;border-radius:12px;font-weight:700;font-size:11px;">FAIL</span>'
         )
+
+
+@admin.register(OperationRecord)
+class OperationRecordAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin):
+    list_display = ('entity_type', 'serial_number', 'operation_code', 'status', 'result', 'operator', 'created_at')
+    list_filter = ('entity_type', 'operation_code', 'status', 'result')
+    search_fields = ('serial_number', 'operation_code')
+    list_per_page = 50
 
 
 # ── Admin Branding ──────────────────────────────────────────────────────────
