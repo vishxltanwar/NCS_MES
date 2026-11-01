@@ -444,7 +444,6 @@ class TraceabilityImmutabilityTests(HardeningTestMixin, TestCase):
                     magnet_serial='MAGNET-IMMUTABLE',
                     cycle_time=1.0,
                     pass_fail=True,
-                    shift='A',
                 ),
                 '/api/magnet-insertion/{id}/',
             ),
@@ -559,23 +558,26 @@ class IdentifierUniquenessTests(HardeningTestMixin, TestCase):
                 result='Fail',
             )
 
-    def test_magnet_pair_is_case_insensitively_unique_in_database(self):
+    def test_magnet_pair_allows_many_rows_same_stack_serial(self):
+        # Per the new cycle design, stack_serial is the primary identity and the
+        # same stack_serial can span many cycles (each saved as a new row).
+        # No unique constraint on (stack_serial, magnet_serial) exists anymore.
         MagnetInsertion.objects.create(
             stack_serial='stack-race-1',
             magnet_serial='magnet-race-1',
             cycle_time=1,
             pass_fail=True,
-            shift='A',
         )
-
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            MagnetInsertion.objects.create(
-                stack_serial='STACK-RACE-1',
-                magnet_serial='MAGNET-RACE-1',
-                cycle_time=2,
-                pass_fail=False,
-                shift='A',
-            )
+        MagnetInsertion.objects.create(
+            stack_serial='STACK-RACE-1',
+            magnet_serial='MAGNET-RACE-1',
+            cycle_time=2,
+            pass_fail=False,
+        )
+        self.assertEqual(
+            MagnetInsertion.objects.filter(stack_serial__iexact='stack-race-1').count(),
+            2,
+        )
 
     def test_magnet_api_treats_case_variant_as_duplicate(self):
         user = self.make_user('operator', 'magnet_insertion')
@@ -615,7 +617,6 @@ class NumericIntegrityConstraintTests(TestCase):
                 magnet_serial='MAGNET-CYCLE-ZERO',
                 cycle_time=0,
                 pass_fail=False,
-                shift='A',
             )
 
 
@@ -926,9 +927,13 @@ class UiHardeningTests(TestCase):
         self.assertNotIn('Log &amp; Resolve', content)
         self.assertIn('This view is informational', content)
 
-    def test_magnet_page_has_manual_process_fallback(self):
+    def test_magnet_page_has_no_manual_controls(self):
+        # Cycles are saved from the PLC OK/NG counters only, so the page has
+        # no manual fallback, save button or reset button.
         with open('templates/core/magnet_insertion.html', encoding='utf-8') as template:
             content = template.read()
 
-        self.assertIn('manual-cycle-time', content)
-        self.assertIn('manual-result', content)
+        self.assertNotIn('manual-cycle-time', content)
+        self.assertNotIn('manual-result', content)
+        self.assertNotIn('reset-btn', content)
+        self.assertNotIn('save-btn', content)

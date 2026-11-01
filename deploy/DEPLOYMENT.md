@@ -10,6 +10,11 @@ Only Caddy exposes ports `80` and `443`. PostgreSQL and Django remain on the
 private Docker network. Caddy obtains and renews the TLS certificate after the
 domain DNS points to the server.
 
+The web container runs one Gunicorn worker because the magnet-insertion PLC
+poller and its cycle cache are process-local. Configure `PLC_HOST` in
+`deploy/.env.production`; the server polls the PLC every 300 ms without relying
+on an open browser tab.
+
 ## Before starting
 
 1. Use a supported Linux server with Docker Engine and the Docker Compose plugin.

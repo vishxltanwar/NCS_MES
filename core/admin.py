@@ -72,8 +72,8 @@ class StatorTestingRecordAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin
 
 @admin.register(MagnetInsertion)
 class MagnetInsertionAdmin(ImmutableTraceabilityAdminMixin, admin.ModelAdmin):
-    list_display = ('stack_serial', 'magnet_serial', 'cycle_time', 'colored_result', 'shift', 'operator', 'timestamp')
-    list_filter = ('pass_fail', 'shift')
+    list_display = ('stack_serial', 'magnet_serial', 'cycle_time', 'colored_result', 'operator', 'timestamp')
+    list_filter = ('pass_fail',)
     search_fields = ('stack_serial', 'magnet_serial')
     list_per_page = 50
 

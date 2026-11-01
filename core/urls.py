@@ -73,6 +73,8 @@ urlpatterns = [
 
     # ── Magnet Insertion API ──────────────────────────────────────────────────
     path('api/magnet-insertion/status/', views.api_magnet_insertion_status, name='api_magnet_insertion_status'),
+    path('api/magnet-insertion/cycle/save/', views.api_magnet_insertion_cycle_save, name='api_magnet_insertion_cycle_save'),
+    path('api/magnet-insertion/reset/', views.api_magnet_insertion_reset, name='api_magnet_insertion_reset'),
     path('api/magnet-insertion/', views.api_magnet_insertion_list, name='api_magnet_insertion_list'),
     path('api/magnet-insertion/create/', views.api_magnet_insertion_create, name='api_magnet_insertion_create'),
     path('api/magnet-insertion/stats/', views.api_magnet_insertion_stats, name='api_magnet_insertion_stats'),

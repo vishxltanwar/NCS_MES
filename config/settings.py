@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     # Local
-    'core',
+    'core.apps.CoreConfig',
 ]
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
@@ -153,6 +153,29 @@ SCANNER_TIMEOUT = float(os.getenv('SCANNER_TIMEOUT', 1))
 PLC_HOST = os.getenv('PLC_HOST', '').strip()
 PLC_PORT = int(os.getenv('PLC_PORT', 502))
 PLC_TIMEOUT = float(os.getenv('PLC_TIMEOUT', 1))
+# ── PLC Modbus register addresses (from changes.csv scan) ─────────────────────
+# Override through the environment if the PLC register map changes.
+PLC_REG_MAGNET_SERIAL = int(os.getenv('PLC_REG_MAGNET_SERIAL', '3230'))
+PLC_REG_STACK_SERIAL = int(os.getenv('PLC_REG_STACK_SERIAL', '3260'))
+PLC_REG_RUN = int(os.getenv('PLC_REG_RUN', '10'))            # state code
+PLC_REG_CYCLE_TIME = int(os.getenv('PLC_REG_CYCLE_TIME', '60'))  # tenths of sec (LHS D60)
+# ── Counter-based save trigger (FX5U, 32-bit holding regs, low word first) ───
+PLC_REG_LHS_OK_COUNTER = int(os.getenv('PLC_REG_LHS_OK_COUNTER', '500'))   # D500-501
+PLC_REG_LHS_NG_COUNTER = int(os.getenv('PLC_REG_LHS_NG_COUNTER', '502'))   # D502-503
+PLC_REG_RHS_OK_COUNTER = int(os.getenv('PLC_REG_RHS_OK_COUNTER', '504'))   # D504-505
+PLC_REG_RHS_NG_COUNTER = int(os.getenv('PLC_REG_RHS_NG_COUNTER', '506'))   # D506-507
+PLC_REG_RHS_CYCLE_TIME = int(os.getenv('PLC_REG_RHS_CYCLE_TIME', '62'))    # D62 tenths
+PLC_REG_RHS_STATUS = int(os.getenv('PLC_REG_RHS_STATUS', '11'))            # D11
+PLC_RHS_ENABLED = env_bool('PLC_RHS_ENABLED', False)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {'plain': {'format': '%(asctime)s %(levelname)s %(name)s %(message)s'}},
+    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},
+    'loggers': {'core': {'handlers': ['console'], 'level': 'INFO', 'propagate': False}},
+}
 
 # ── Default PK ────────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
