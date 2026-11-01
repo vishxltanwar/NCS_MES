@@ -41,6 +41,7 @@ class Migration(migrations.Migration):
             name='pass_fail',
             field=models.BooleanField(blank=True, default=None, help_text='True=PASS/OK, False=FAIL/NOK', null=True),
         ),
+        migrations.RunSQL("UPDATE magnet_insertion SET cycle_time = NULL WHERE cycle_time <= 0", migrations.RunSQL.noop),
         migrations.AddConstraint(
             model_name='magnetinsertion',
             constraint=models.CheckConstraint(condition=models.Q(('cycle_time__isnull', True), models.Q(('cycle_time__gt', 0), ('cycle_time__lte', 3600)), _connector='OR'), name='magnet_cycle_time_valid'),

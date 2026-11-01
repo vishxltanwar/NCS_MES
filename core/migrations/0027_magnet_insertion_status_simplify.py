@@ -10,6 +10,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL("UPDATE magnet_insertion SET status = CASE WHEN pass_fail IS FALSE THEN 'NOK' ELSE 'OK' END WHERE status NOT IN ('OK', 'NOK')", migrations.RunSQL.noop),
         migrations.AlterField(
             model_name='magnetinsertion',
             name='status',
