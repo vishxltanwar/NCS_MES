@@ -70,6 +70,13 @@ urlpatterns = [
 
     # Motor Assembly API
     path('api/machines/motor-assembly/', views.api_motor_assembly, name='api_motor_assembly'),
+    path('api/machines/motor-assembly/<int:pk>/assign-serial/', views.api_motor_serial_assign, name='api_motor_serial_assign'),
+
+    # ── Operations API ────────────────────────────────────────────────────────
+    path('api/operations/', views.api_operations_list, name='api_operations_list'),
+    path('api/operations/record/', views.api_operation_record, name='api_operation_record'),
+    path('api/operations/check-sequence/', views.api_operation_check_sequence, name='api_operation_check_sequence'),
+    path('api/operations/by-serial/<str:entity_type>/<str:serial>/', views.api_operations_by_serial, name='api_operations_by_serial'),
 
     # ── Magnet Insertion API ──────────────────────────────────────────────────
     path('api/magnet-insertion/status/', views.api_magnet_insertion_status, name='api_magnet_insertion_status'),
