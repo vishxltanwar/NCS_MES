@@ -20,18 +20,20 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 import logging
+import struct
+import threading
+import time
 import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
-from django.db import DatabaseError, IntegrityError, models, transaction
 from pymodbus.client import ModbusTcpClient
 from rest_framework import status, serializers
 from .pagination import paginate_queryset
-from .plc_poller import get_plc_status, reset_plc_status
 from django.db.models.functions import RowNumber
+from django.db import models, transaction
 from django.db.models.functions import Lower, RowNumber
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -40,7 +42,6 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from utils.scanner import clean_scan_data
-from .plc_poller import get_plc_status, reset_plc_status
 from .models import (
     DailySerialCounter,
     FinalInspection,
@@ -1115,7 +1116,6 @@ def api_traceability_search(request):
             'cycle_time': magnet.cycle_time,
             'pass_fail': magnet.pass_fail,
             'result': 'PASS' if magnet.pass_fail else 'FAIL',
-            'shift': magnet.shift,
             'operator': magnet.operator.get_full_name() if magnet.operator else '',
             'timestamp': magnet.timestamp.astimezone(IST).isoformat() if magnet.timestamp else '',
         }
@@ -2170,11 +2170,13 @@ def api_magnet_insertion_list(request):
             'id': r.id,
             'stack_serial': r.stack_serial,
             'magnet_serial': r.magnet_serial,
-            'cycle_time': r.cycle_time,
+            'status': r.status,
+            'result': 'OK' if r.status == MagnetInsertion.STATUS_OK else 'NOK',
             'pass_fail': r.pass_fail,
-            'result': 'PASS' if r.pass_fail else 'FAIL',
-            'shift': r.shift,
+            'cycle_time': r.cycle_time,
             'operator': r.operator.get_full_name() if r.operator else '',
+            'start_time': r.start_time.astimezone(IST).isoformat() if r.start_time else '',
+            'end_time': r.end_time.astimezone(IST).isoformat() if r.end_time else '',
             'timestamp': r.timestamp.astimezone(IST).isoformat() if r.timestamp else '',
         })
     return Response({'results': data, **meta})
@@ -2186,7 +2188,6 @@ def api_magnet_insertion_create(request):
     try:
         stack_serial = _request_text(request.data, 'stack_serial', label='Stack serial', max_length=64, upper=True)
         magnet_serial = _request_text(request.data, 'magnet_serial', label='Magnet serial', max_length=64, upper=True)
-        shift = _request_text(request.data, 'shift', max_length=1, upper=True)
     except ValueError as exc:
         return Response({'detail': str(exc)}, status=400)
     cycle_time = request.data.get('cycle_time')
@@ -2200,8 +2201,6 @@ def api_magnet_insertion_create(request):
         return Response({'detail': 'Cycle time is required'}, status=400)
     if not isinstance(pass_fail, bool):
         return Response({'detail': 'pass_fail must be a JSON boolean'}, status=400)
-    if shift not in ('A', 'B', 'C', 'G'):
-        return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
 
     try:
         cycle_time = float(cycle_time)
@@ -2234,7 +2233,6 @@ def api_magnet_insertion_create(request):
                 .first()
             )
             if existing:
-                reset_plc_status()
                 return Response({
                     'id': existing.id,
                     'stack_serial': existing.stack_serial,
@@ -2242,7 +2240,6 @@ def api_magnet_insertion_create(request):
                     'cycle_time': existing.cycle_time,
                     'pass_fail': existing.pass_fail,
                     'result': 'PASS' if existing.pass_fail else 'FAIL',
-                    'shift': existing.shift,
                     'operator': existing.operator.get_full_name() if existing.operator else '',
                     'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
                     'duplicate': True,
@@ -2253,7 +2250,6 @@ def api_magnet_insertion_create(request):
                 magnet_serial=magnet_serial,
                 cycle_time=cycle_time,
                 pass_fail=pass_fail,
-                shift=shift,
                 operator=operator,
             )
     except IntegrityError:
@@ -2263,7 +2259,6 @@ def api_magnet_insertion_create(request):
             magnet_serial__iexact=magnet_serial,
         ).first()
         if existing:
-            reset_plc_status()
             return Response({
                 'id': existing.id,
                 'stack_serial': existing.stack_serial,
@@ -2271,7 +2266,6 @@ def api_magnet_insertion_create(request):
                 'cycle_time': existing.cycle_time,
                 'pass_fail': existing.pass_fail,
                 'result': 'PASS' if existing.pass_fail else 'FAIL',
-                'shift': existing.shift,
                 'operator': existing.operator.get_full_name() if existing.operator else '',
                 'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
                 'duplicate': True,
@@ -2284,7 +2278,6 @@ def api_magnet_insertion_create(request):
         logger.exception('Could not create magnet insertion record')
         return Response({'detail': 'Could not save magnet insertion record.'}, status=500)
 
-    reset_plc_status()
     return Response({
         'id': record.id,
         'stack_serial': record.stack_serial,
@@ -2292,7 +2285,6 @@ def api_magnet_insertion_create(request):
         'cycle_time': record.cycle_time,
         'pass_fail': record.pass_fail,
         'result': 'PASS' if record.pass_fail else 'FAIL',
-        'shift': record.shift,
         'operator': record.operator.get_full_name() if record.operator else '',
         'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
     }, status=201)
@@ -2303,8 +2295,8 @@ def api_magnet_insertion_create(request):
 def api_magnet_insertion_stats(request):
     qs = MagnetInsertion.objects.all()
     total = qs.count()
-    passed = qs.filter(pass_fail=True).count()
-    failed = qs.filter(pass_fail=False).count()
+    passed = qs.filter(status=MagnetInsertion.STATUS_OK).count()
+    failed = qs.filter(status=MagnetInsertion.STATUS_NOK).count()
     yield_pct = round((passed / total) * 100, 1) if total > 0 else 0.0
 
     return Response({
@@ -2660,29 +2652,607 @@ def api_motor_serial_assign(request, pk):
     )
     return Response({'motor_serial': link.motor_serial, 'final_motor_serial': final_serial}, status=201)
 
+
+def _decode_modbus_string(registers):
+    """Decode a block of Modbus holding registers into an ASCII string.
+
+    Each register holds two ASCII bytes, first character in the low byte
+    (FX5U order). Null bytes and
+    surrounding whitespace are stripped.
+    """
+    if not registers:
+        return ''
+    b = b''
+    for reg in registers:
+        b += struct.pack('<H', int(reg))
+    return b.decode('ascii', errors='ignore').strip('\x00').strip()
+
+
+def _read_plc():
+    """Read the PLC and return a dict of readings, or None if unavailable.
+
+    Test seam: callers (and tests) can monkeypatch this to simulate PLC values.
+    """
+    client = None
+    try:
+        if not settings.PLC_HOST:
+            return None
+        client = ModbusTcpClient(
+            settings.PLC_HOST,
+            port=settings.PLC_PORT,
+            timeout=settings.PLC_TIMEOUT,
+        )
+        if not client.connect():
+            client.close()
+            client = None
+            return None
+
+        def rd(addr, count=1):
+            if addr is None:
+                return None
+            try:
+                r = client.read_holding_registers(address=addr, count=count, device_id=1)
+            except Exception:
+                return None
+            if r.isError():
+                return None
+            return list(r.registers)
+
+        mag_regs = rd(settings.PLC_REG_MAGNET_SERIAL, 9)
+        stack_regs = rd(settings.PLC_REG_STACK_SERIAL, 9)
+        state_regs = rd(settings.PLC_REG_RUN, 1)
+        ct_regs = rd(settings.PLC_REG_CYCLE_TIME, 1)
+
+        if not state_regs:
+            logger.warning('PLC state register could not be read')
+            client.close()
+            client = None
+            return None
+
+        def rd32(addr):
+            regs = rd(addr, 2)
+            if not regs or len(regs) < 2:
+                return None
+            # FX5U Modbus: 32-bit value stored low word first.
+            return int(regs[0]) + (int(regs[1]) << 16)
+
+        lhs_ok = rd32(settings.PLC_REG_LHS_OK_COUNTER)
+        lhs_ng = rd32(settings.PLC_REG_LHS_NG_COUNTER)
+
+        rhs_ok = None
+        rhs_ng = None
+        rhs_ct_raw = None
+        rhs_status = None
+        if getattr(settings, 'PLC_RHS_ENABLED', False):
+            rhs_ok = rd32(settings.PLC_REG_RHS_OK_COUNTER)
+            rhs_ng = rd32(settings.PLC_REG_RHS_NG_COUNTER)
+            rhs_ct_regs = rd(settings.PLC_REG_RHS_CYCLE_TIME, 1)
+            rhs_ct_raw = rhs_ct_regs[0] if rhs_ct_regs else None
+            rhs_status_regs = rd(settings.PLC_REG_RHS_STATUS, 1)
+            rhs_status = rhs_status_regs[0] if rhs_status_regs else None
+
+        client.close()
+        client = None
+        return {
+            'connected': True,
+            'magnet_serial': _decode_modbus_string(mag_regs) if mag_regs else '',
+            'stack_serial': _decode_modbus_string(stack_regs) if stack_regs else '',
+            'state': state_regs[0] if state_regs else None,
+            'cycle_time_raw': ct_regs[0] if ct_regs else None,
+            'lhs_ok_counter': lhs_ok,
+            'lhs_ng_counter': lhs_ng,
+            'rhs_ok_counter': rhs_ok,
+            'rhs_ng_counter': rhs_ng,
+            'rhs_cycle_time_raw': rhs_ct_raw,
+            'rhs_status': rhs_status,
+            'done': False,
+        }
+    except Exception:
+        logger.exception('PLC read failed')
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        return None
+
+
+def _poll_plc():
+    """Read the PLC once and feed the cycle state machine.
+
+    Returns a tuple (reading, result). ``reading`` is None when the PLC could
+    not be read (unavailable / error); ``result`` is the save decision payload.
+    """
+    with _PLC_POLL_LOCK:
+        reading = _read_plc()
+        if reading is None:
+            result = {'just_saved': False, 'saved_record': None, 'skip_reason': 'plc_unavailable'}
+            _log_plc_cycle_state({}, result)
+            return None, result
+        result = _process_plc_reading(reading)
+        return reading, result
+
+
+_last_cycle_log_monotonic = None
+
+
+def _log_plc_cycle_state(reading, result):
+    """DEBUG log of the PLC cycle snapshot; throttled to one line per second."""
+    global _last_cycle_log_monotonic
+    now = time.monotonic()
+    if _last_cycle_log_monotonic is not None and (now - _last_cycle_log_monotonic) < 1.0:
+        return
+    _last_cycle_log_monotonic = now
+    cache = _CYCLE_CACHE
+    reading = reading or {}
+    just_saved = bool(result.get('just_saved'))
+    skip_reason = result.get('skip_reason')
+    decision = 'saved' if just_saved else f'skipped:{skip_reason or "no_save"}'
+    logger.debug(
+        'PLC cycle state=%s lhs_ok=%s lhs_ng=%s mag=%s stack=%s running=%s decision=%s skip=%s',
+        reading.get('state'),
+        reading.get('lhs_ok_counter'),
+        reading.get('lhs_ng_counter'),
+        cache.get('magnet_serial') or '-',
+        cache.get('stack_serial') or '-',
+        cache.get('running'),
+        decision,
+        skip_reason or '-',
+    )
+
+
+_PLC_POLL_LOCK = threading.Lock()
+
+# Serials are dropped once the machine has been idle with empty scanner registers
+# for this long: a machine reset, or a cycle that ended without a counter increase.
+# The delay covers a counter that rises just after the state falls, and registers
+# that empty just before the state rises at cycle start.
+PLC_ABORT_GRACE_SECONDS = 5.0
+
+
+def _reading_counter(reading, *keys):
+    for key in keys:
+        if key in reading and reading.get(key) is not None:
+            try:
+                return int(reading.get(key))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _process_plc_reading(reading):
+    """Apply a PLC reading to the server-side cycle cache.
+
+    Returns a dict: {'just_saved': bool, 'saved_record': payload-or-None,
+                    'skip_reason': reason-when-skipped-or-None}.
+    Side effects update the module-global _CYCLE_CACHE. Survives page refreshes
+    (process memory); the deployment runs one web worker so this cache is shared
+    by the background poller and request handlers.
+    """
+    global _CYCLE_CACHE
+    if not reading or not reading.get('connected'):
+        return {'just_saved': False, 'saved_record': None, 'skip_reason': 'plc_unavailable'}
+
+    cache = _CYCLE_CACHE
+    now = django_tz.now()
+    mag = (reading.get('magnet_serial') or '').strip()
+    stk = (reading.get('stack_serial') or '').strip()
+    state = reading.get('state')
+    try:
+        running = state is not None and int(state) >= 2
+    except (TypeError, ValueError):
+        running = False
+    ct_raw = reading.get('cycle_time_raw')
+    rhs_ct_raw = reading.get('rhs_cycle_time_raw')
+    if rhs_ct_raw is None:
+        rhs_ct_raw = reading.get('rhs_cycle_time')
+    if rhs_ct_raw is None:
+        rhs_ct_raw = reading.get('cycle_time_raw')
+
+    # PLC clears these registers at cycle start; only explicit reset/save clears
+    # the cache, so empty reads never discard a scanned serial.
+    if mag:
+        cache['magnet_serial'] = mag
+    if stk:
+        cache['stack_serial'] = stk
+
+    prev_running = bool(cache.get('running'))
+
+    just_saved = False
+    saved_record = None
+    skip_reason = None
+
+    # Start edge: state goes from <2 to >=2.
+    if (not prev_running) and running:
+        cache['running'] = True
+        cache['cycle_saved'] = False
+        cache['abort_deadline'] = None
+        cache['start_time'] = now
+        cache['cycle_time'] = None
+        cache['cycle_time_raw'] = None
+        cache['end_time'] = None
+
+    # D60 can read 0 around the end of a cycle; keep the last real value.
+    if running and ct_raw:
+        cache['cycle_time_raw'] = ct_raw
+
+    # Counter-based save triggers.
+    lhs_ok = _reading_counter(reading, 'lhs_ok_counter', 'lhs_ok', 'ok_counter',
+                              'ok_count', 'lhs_ok_count', 'd500', 'counter_lhs_ok')
+    lhs_ng = _reading_counter(reading, 'lhs_ng_counter', 'lhs_ng', 'ng_counter',
+                              'ng_count', 'lhs_ng_count', 'd502', 'counter_lhs_ng')
+
+    def save_for_counter(status, pass_fail, delta, label, side_ct_raw):
+        nonlocal just_saved, saved_record, skip_reason
+        if not cache.get('magnet_serial') or not cache.get('stack_serial'):
+            skip_reason = 'missing_serials'
+            logger.info('Counter %s increased by %s but serials missing; skipping save', label, delta)
+            return
+        raw = side_ct_raw or ct_raw or cache.get('cycle_time_raw')
+        ct = float(raw) / 10.0 if raw else None
+        if ct is None:
+            skip_reason = 'missing_cycle_time'
+            logger.info('Counter %s increased by %s but cycle time missing; skipping save', label, delta)
+            return
+        parsed_start = cache.get('start_time') or now
+        try:
+            with transaction.atomic():
+                record = MagnetInsertion.objects.create(
+                    stack_serial=cache['stack_serial'],
+                    magnet_serial=cache['magnet_serial'],
+                    status=status,
+                    cycle_time=ct,
+                    pass_fail=pass_fail,
+                    operator=None,
+                    start_time=parsed_start,
+                    end_time=now,
+                )
+        except Exception:
+            logger.exception('Auto-save on counter increase failed')
+            skip_reason = 'save_failed'
+            return
+        cache['cycle_time'] = ct
+        cache['end_time'] = now
+        cache['cycle_saved'] = True
+        cache['save_notice'] = True
+        cache['save_notice_record'] = _record_payload(record)
+        just_saved = True
+        saved_record = _record_payload(record)
+        if delta > 1:
+            logger.info('missed %s cycles (jump of %s); missed %s cycles', delta - 1, delta, delta)
+        logger.info('Counter %s increased by %s; saved %s', label, delta, status)
+
+    # LHS OK
+    prev = cache.get('lhs_ok_prev')
+    if lhs_ok is not None:
+        if prev is None:
+            cache['lhs_ok_prev'] = lhs_ok
+        elif lhs_ok < prev:
+            logger.info('LHS OK counter decreased (reset) from %s to %s; re-baselining', prev, lhs_ok)
+            cache['lhs_ok_prev'] = lhs_ok
+            skip_reason = 'counter_reset'
+        elif lhs_ok > prev:
+            delta = lhs_ok - prev
+            cache['lhs_ok_prev'] = lhs_ok
+            save_for_counter(MagnetInsertion.STATUS_OK, True, delta, 'LHS OK', ct_raw)
+
+    # LHS NG
+    prev = cache.get('lhs_ng_prev')
+    if lhs_ng is not None:
+        if prev is None:
+            cache['lhs_ng_prev'] = lhs_ng
+        elif lhs_ng < prev:
+            logger.info('LHS NG counter decreased (reset) from %s to %s; re-baselining', prev, lhs_ng)
+            cache['lhs_ng_prev'] = lhs_ng
+            skip_reason = 'counter_reset'
+        elif lhs_ng > prev:
+            delta = lhs_ng - prev
+            cache['lhs_ng_prev'] = lhs_ng
+            save_for_counter(MagnetInsertion.STATUS_NOK, False, delta, 'LHS NG', ct_raw)
+
+    # RHS (behind setting)
+    if getattr(settings, 'PLC_RHS_ENABLED', False):
+        rhs_ok = _reading_counter(reading, 'rhs_ok_counter', 'rhs_ok', 'rhs_ok_count', 'd504')
+        rhs_ng = _reading_counter(reading, 'rhs_ng_counter', 'rhs_ng', 'rhs_ng_count', 'd506')
+        prev = cache.get('rhs_ok_prev')
+        if rhs_ok is not None:
+            if prev is None:
+                cache['rhs_ok_prev'] = rhs_ok
+            elif rhs_ok < prev:
+                logger.info('RHS OK counter decreased (reset) from %s to %s; re-baselining', prev, rhs_ok)
+                cache['rhs_ok_prev'] = rhs_ok
+                skip_reason = 'counter_reset'
+            elif rhs_ok > prev:
+                delta = rhs_ok - prev
+                cache['rhs_ok_prev'] = rhs_ok
+                save_for_counter(MagnetInsertion.STATUS_OK, True, delta, 'RHS OK', rhs_ct_raw)
+        prev = cache.get('rhs_ng_prev')
+        if rhs_ng is not None:
+            if prev is None:
+                cache['rhs_ng_prev'] = rhs_ng
+            elif rhs_ng < prev:
+                logger.info('RHS NG counter decreased (reset) from %s to %s; re-baselining', prev, rhs_ng)
+                cache['rhs_ng_prev'] = rhs_ng
+                skip_reason = 'counter_reset'
+            elif rhs_ng > prev:
+                delta = rhs_ng - prev
+                cache['rhs_ng_prev'] = rhs_ng
+                save_for_counter(MagnetInsertion.STATUS_NOK, False, delta, 'RHS NG', rhs_ct_raw)
+
+    if skip_reason is None and not just_saved:
+        skip_reason = 'no_counter_change'
+
+    _log_plc_cycle_state(reading, {'just_saved': just_saved, 'skip_reason': skip_reason})
+
+    # Clear cached cycle data (not counters) once idle and the cycle is saved, or
+    # once the scanner registers have stayed empty for the grace period.
+    if mag or stk or running:
+        cache['abort_deadline'] = None
+    elif cache.get('abort_deadline') is None and not cache.get('cycle_saved') and (
+            prev_running or cache.get('magnet_serial') or cache.get('stack_serial')):
+        cache['abort_deadline'] = time.monotonic() + PLC_ABORT_GRACE_SECONDS
+    abort_deadline = cache.get('abort_deadline')
+    aborted = abort_deadline is not None and time.monotonic() >= abort_deadline
+    if aborted and (cache.get('magnet_serial') or cache.get('stack_serial')):
+        logger.info(
+            'Cleared unsaved serials stack=%s magnet=%s: idle with empty PLC registers',
+            cache.get('stack_serial'), cache.get('magnet_serial'),
+        )
+    if (not running) and (cache.get('cycle_saved') or aborted):
+        cache['magnet_serial'] = None
+        cache['stack_serial'] = None
+        cache['start_time'] = None
+        cache['cycle_time'] = None
+        cache['cycle_time_raw'] = None
+        cache['end_time'] = None
+        cache['cycle_saved'] = False
+        cache['abort_deadline'] = None
+    if not running:
+        cache['running'] = False
+
+    return {'just_saved': just_saved, 'saved_record': saved_record, 'skip_reason': skip_reason}
+
+
 @api_view(['GET'])
 @api_access_required('magnet_read')
 def api_magnet_insertion_status(request):
-    try:
-        state = get_plc_status()
-    except Exception:
-        logger.exception('PLC status poll failed')
-        return Response({
-            'connected': False,
-            'error': 'PLC unavailable',
-        }, status=503)
+    """Poll the PLC and drive the server-side magnet insertion cycle state machine.
+
+    Serials are cached server-side the moment they are scanned and are NOT
+    overwritten by the empty reads that occur when the cycle starts. An OK/NG
+    counter increase triggers an automatic DB save.
+    """
+    with _PLC_POLL_LOCK:
+        reading = _read_plc()
+        if reading is None:
+            result = {'just_saved': False, 'saved_record': None, 'skip_reason': 'plc_unavailable'}
+            _log_plc_cycle_state({}, result)
+            return Response({'connected': False, 'error': 'PLC unavailable'}, status=503)
+        result = _process_plc_reading(reading)
+    cache = _CYCLE_CACHE
+    state = reading.get('state')
+    save_notice = cache.pop('save_notice', False)
+    save_notice_record = cache.pop('save_notice_record', None)
+    just_saved = result['just_saved'] or save_notice
+    saved_record = result['saved_record'] or save_notice_record
+    running = bool(cache.get('running'))
+    ct_raw = reading.get('cycle_time_raw')
+    if cache.get('cycle_time') is not None:
+        cycle_time = cache.get('cycle_time')
+    elif ct_raw is not None:
+        cycle_time = float(ct_raw) / 10.0
+    else:
+        cycle_time = None
     return Response({
-        'connected': bool(state.get('connected')),
-        'magnet_serial': state.get('magnet_serial'),
-        'stack_serial': state.get('stack_serial'),
-        'cycle_complete': bool(state.get('cycle_complete')),
-        'pass_fail': state.get('pass_fail'),
-        'cycle_time': state.get('cycle_time'),
-        'cycle_id': state.get('cycle_id', 0),
+        'connected': True,
+        'magnet_serial': cache.get('magnet_serial'),
+        'stack_serial': cache.get('stack_serial'),
+        'state': state,
+        'run': running,
+        'done': False,
+        'save_trigger': bool(just_saved),
+        'reset': False,
+        'pass_fail': None,
+        'cycle_time': cycle_time,
+        'saved': False,
+        'just_saved': just_saved,
+        'saved_record': saved_record,
     })
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAGNET INSERTION CYCLE MANAGEMENT (in-memory cache + DB persistence on save)
+
+# In-memory cache of the current (unsaved) cycle. Nothing is written to the DB
+# until a PLC OK/NG counter increases or the save endpoint is called.
+# Single-worker deployment assumption; for multi-worker, back this with Redis.
+_CYCLE_CACHE = {
+    'stack_serial': None,
+    'magnet_serial': None,
+    'start_time': None,        # moment state went 1 -> >=2
+    'pass_fail': None,
+    'cycle_time': None,        # saved cycle time (seconds)
+    'cycle_time_raw': None,    # last raw reading (tenths)
+    'end_time': None,
+    'saved': False,            # manual save guard
+    'saved_stack': None,
+    'saved_magnet': None,
+    'running': False,          # state >= 2
+    'cycle_saved': False,      # counter save already happened for this cycle
+    'abort_deadline': None,    # monotonic time an unsaved idle cycle is dropped
+    'save_notice': False,
+    'save_notice_record': None,
+    'lhs_ok_prev': None,
+    'lhs_ng_prev': None,
+    'rhs_ok_prev': None,
+    'rhs_ng_prev': None,
+}
+
+
+def _clear_cycle_cache():
+    _CYCLE_CACHE.update({
+        'stack_serial': None,
+        'magnet_serial': None,
+        'start_time': None,
+        'pass_fail': None,
+        'cycle_time': None,
+        'cycle_time_raw': None,
+        'end_time': None,
+        'saved': False,
+        'saved_stack': None,
+        'saved_magnet': None,
+        'running': False,
+        'cycle_saved': False,
+        'abort_deadline': None,
+        'save_notice': False,
+        'save_notice_record': None,
+    })
+
+
+def _record_payload(record):
+    return {
+        'id': record.id,
+        'stack_serial': record.stack_serial,
+        'magnet_serial': record.magnet_serial,
+        'status': record.status,
+        'cycle_time': record.cycle_time,
+        'pass_fail': record.pass_fail,
+        'result': 'OK' if record.status == MagnetInsertion.STATUS_OK else 'NOK',
+        'operator': record.operator.get_full_name() if record.operator else '',
+        'start_time': record.start_time.astimezone(IST).isoformat() if record.start_time else '',
+        'end_time': record.end_time.astimezone(IST).isoformat() if record.end_time else '',
+        'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
+    }
+
+
+@api_view(['POST'])
+@api_access_required('magnet_write')
+@transaction.atomic
+def api_magnet_insertion_cycle_save(request):
+    """Save the current in-memory cycle as ONE new DB row.
+
+    Guarded against double saves: once `saved` is set for the same stack +
+    magnet pair, subsequent save calls return the existing row instead of
+    creating a duplicate. Each cycle is a new row identified by (stack_serial,
+    start_time); old rows are never overwritten.
+    """
+    try:
+        stack_serial = _request_text(request.data, 'stack_serial', max_length=64, upper=True)
+        magnet_serial = _request_text(request.data, 'magnet_serial', max_length=64, upper=True)
+        pass_fail = request.data.get('pass_fail')
+        cycle_time = request.data.get('cycle_time')
+        start_time = request.data.get('start_time')
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    if not stack_serial:
+        return Response({'detail': 'Stack serial is required'}, status=400)
+    if not magnet_serial:
+        return Response({'detail': 'Magnet serial is required'}, status=400)
+    if not isinstance(pass_fail, bool):
+        return Response({'detail': 'pass_fail must be a JSON boolean'}, status=400)
+
+    # Guard: only one save per cycle (rising edge). If already saved for this
+    # pair, return the existing (latest) row instead of creating a duplicate.
+    if _CYCLE_CACHE['saved'] and \
+            _CYCLE_CACHE.get('saved_stack') == stack_serial and \
+            _CYCLE_CACHE.get('saved_magnet') == magnet_serial:
+        existing = (
+            MagnetInsertion.objects
+            .filter(stack_serial__iexact=stack_serial)
+            .order_by('-start_time', '-timestamp')
+            .first()
+        )
+        return Response(
+            _record_payload(existing) if existing else {'detail': 'Cycle already saved'},
+            status=200,
+        )
+
+    operator = request.user if request.user.is_authenticated else None
+    now = django_tz.now()
+    parsed_start = now
+    if start_time:
+        try:
+            parsed_start = django_tz.datetime.fromisoformat(str(start_time))
+            if django_tz.is_naive(parsed_start):
+                parsed_start = django_tz.make_aware(parsed_start)
+        except (ValueError, TypeError):
+            parsed_start = now
+
+    # Validate cycle_time if provided.
+    ct = None
+    if cycle_time is not None:
+        try:
+            ct = float(cycle_time)
+        except (ValueError, TypeError):
+            ct = None
+        if ct is not None and not (0 < ct <= 3600):
+            return Response(
+                {'detail': 'Cycle time must be greater than 0 and no more than 3600 seconds'},
+                status=400,
+            )
+
+    with transaction.atomic():
+        record = MagnetInsertion.objects.create(
+            stack_serial=stack_serial,
+            magnet_serial=magnet_serial,
+            status=MagnetInsertion.STATUS_OK if pass_fail else MagnetInsertion.STATUS_NOK,
+            cycle_time=ct,
+            pass_fail=pass_fail,
+            operator=operator,
+            start_time=parsed_start,
+            end_time=now,
+        )
+
+    _CYCLE_CACHE.update({
+        'stack_serial': None,
+        'magnet_serial': None,
+        'start_time': None,
+        'pass_fail': pass_fail,
+        'cycle_time': ct,
+        'cycle_time_raw': None,
+        'end_time': now,
+        'saved': True,
+        'saved_stack': stack_serial,
+        'saved_magnet': magnet_serial,
+        'running': False,
+        'cycle_saved': False,
+        'abort_deadline': None,
+    })
+
+    logger.info(
+        'Magnet insertion cycle saved: stack=%s magnet=%s status=%s start_time=%s',
+        stack_serial, magnet_serial, record.status, record.start_time,
+    )
+    return Response(_record_payload(record), status=201)
+
+
+@api_view(['POST'])
+@api_access_required('magnet_write')
+@transaction.atomic
+def api_magnet_insertion_reset(request):
+    """On RESET: discard the in-memory cycle without writing to the DB.
+
+    No row is created and no existing row is touched. Logs "cycle discarded"
+    when there was an unsaved cycle in progress.
+    """
+    stack_serial = request.data.get('stack_serial', '')
+    magnet_serial = request.data.get('magnet_serial', '')
+
+    had_unsaved = bool(_CYCLE_CACHE['stack_serial'] or _CYCLE_CACHE['magnet_serial'])
+    _clear_cycle_cache()
+
+    if had_unsaved:
+        logger.warning(
+            'Magnet insertion cycle discarded on reset: stack=%s magnet=%s '
+            '(no DB row written)',
+            stack_serial, magnet_serial,
+        )
+
+    return Response({'discarded': had_unsaved})
+
+
+
 # FINAL INSPECTION API
 # ══════════════════════════════════════════════════════════════════════════════
 

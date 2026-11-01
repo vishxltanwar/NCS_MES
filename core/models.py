@@ -294,27 +294,34 @@ class MotorAssembly(models.Model):
 
 
 class MagnetInsertion(models.Model):
-    SHIFT_CHOICES = [('A', 'A'), ('B', 'B'), ('C', 'C'), ('G', 'G')]
+    STATUS_OK = 'OK'
+    STATUS_NOK = 'NOK'
+    STATUS_CHOICES = [
+        (STATUS_OK, 'OK'),
+        (STATUS_NOK, 'NOK'),
+    ]
 
+    # stack_serial is the primary cycle identity. magnet_serial is a plain data
+    # field (not part of identity) so the same stack_serial can span many cycles.
     stack_serial  = models.CharField(max_length=64, db_index=True)
     magnet_serial = models.CharField(max_length=64, db_index=True)
-    cycle_time    = models.FloatField(help_text='Cycle time in seconds')
-    pass_fail     = models.BooleanField(default=True, help_text='True=PASS, False=FAIL')
-    shift         = models.CharField(max_length=1, choices=SHIFT_CHOICES)
+    status        = models.CharField(max_length=4, choices=STATUS_CHOICES, default=STATUS_OK, db_index=True)
+    cycle_time    = models.FloatField(help_text='Cycle time in seconds', null=True, blank=True)
+    pass_fail     = models.BooleanField(default=None, null=True, blank=True, help_text='True=PASS/OK, False=FAIL/NOK')
     operator      = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    start_time    = models.DateTimeField(null=True, blank=True, db_index=True)
+    end_time      = models.DateTimeField(null=True, blank=True, db_index=True)
     timestamp     = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'magnet_insertion'
-        ordering = ['-timestamp']
+        ordering = ['-start_time', '-timestamp']
+        indexes = [
+            models.Index(fields=['stack_serial', '-start_time'], name='magnet_stack_start_idx'),
+        ]
         constraints = [
-            models.UniqueConstraint(
-                Lower('stack_serial'),
-                Lower('magnet_serial'),
-                name='magnet_stack_pair_ci_unique',
-            ),
             models.CheckConstraint(
-                condition=models.Q(cycle_time__gt=0, cycle_time__lte=3600),
+                condition=models.Q(cycle_time__isnull=True) | models.Q(cycle_time__gt=0, cycle_time__lte=3600),
                 name='magnet_cycle_time_valid',
             ),
         ]
@@ -322,11 +329,18 @@ class MagnetInsertion(models.Model):
     def save(self, *args, **kwargs):
         self.stack_serial = _normalize_identifier(self.stack_serial)
         self.magnet_serial = _normalize_identifier(self.magnet_serial)
+        if self.pass_fail is not None and self.status in (None, ''):
+            self.status = MagnetInsertion.STATUS_OK if self.pass_fail else MagnetInsertion.STATUS_NOK
         super().save(*args, **kwargs)
 
     def __str__(self):
-        result = 'PASS' if self.pass_fail else 'FAIL'
-        return f"{self.stack_serial} - {result}"
+        if self.pass_fail is True:
+            result = 'PASS'
+        elif self.pass_fail is False:
+            result = 'FAIL'
+        else:
+            result = '—'
+        return f"{self.stack_serial} - {self.status} - {result}"
 
 
 # ── Operation Gates (MES process steps) ───────────────────────────────────────

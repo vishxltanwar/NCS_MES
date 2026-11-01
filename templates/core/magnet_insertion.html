@@ -111,6 +111,16 @@
           </div>
           <div class="h-4 w-px bg-slate-200"></div>
           <div class="flex items-center gap-1.5">
+            <span class="text-[10px] font-bold text-slate-400 uppercase">Run:</span>
+            <span id="plc-run-flag" class="text-xs font-bold text-slate-500">—</span>
+          </div>
+          <div class="h-4 w-px bg-slate-200"></div>
+          <div class="flex items-center gap-1.5">
+            <span class="text-[10px] font-bold text-slate-400 uppercase">Done:</span>
+            <span id="plc-done-flag" class="text-xs font-bold text-slate-500">—</span>
+          </div>
+          <div class="h-4 w-px bg-slate-200"></div>
+          <div class="flex items-center gap-1.5">
             <span class="text-[10px] font-bold text-slate-400 uppercase">Cycle Time:</span>
             <span id="plc-cycle-time" class="text-xs font-bold font-mono text-slate-500">— s</span>
           </div>
@@ -122,46 +132,6 @@
         </div>
       </div>
 
-      <div id="manual-process-panel" class="rounded-lg border border-amber-200 bg-amber-50/70 p-4">
-        <div class="flex items-start justify-between gap-4">
-          <div>
-            <p class="text-xs font-bold text-amber-900">Manual process fallback</p>
-            <p class="mt-1 text-[11px] text-amber-700">Use only when the PLC supplies both serials but does not supply cycle time or result.</p>
-          </div>
-          <div class="grid grid-cols-2 gap-3 min-w-[360px]">
-            <label class="text-[10px] font-bold uppercase tracking-wider text-amber-800">
-              Cycle time (seconds)
-              <input id="manual-cycle-time" type="number" min="0.01" max="3600" step="0.01"
-                oninput="applyManualProcessData()"
-                class="mt-1 w-full rounded-md border-amber-200 bg-white text-sm font-mono text-slate-800">
-            </label>
-            <label class="text-[10px] font-bold uppercase tracking-wider text-amber-800">
-              Result
-              <select id="manual-result" onchange="applyManualProcessData()"
-                class="mt-1 w-full rounded-md border-amber-200 bg-white text-sm font-bold text-slate-800">
-                <option value="">Select result</option>
-                <option value="pass">PASS</option>
-                <option value="fail">FAIL</option>
-              </select>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <!-- Shift + Save -->
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <label class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Current Shift</label>
-          <div class="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg">
-            <span class="material-symbols-outlined text-sm text-[#3DAA6D]">schedule</span>
-            <span id="current-shift-display" class="text-sm font-bold text-slate-700">—</span>
-          </div>
-        </div>
-        <button id="save-btn" onclick="saveRecord()" disabled
-          class="flex items-center gap-2 rounded-lg bg-[#3DAA6D] px-6 py-2.5 text-sm font-bold text-white hover:opacity-90 transition-all shadow-md shadow-[#3DAA6D]/20 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none">
-          <span class="material-symbols-outlined text-lg">save</span> Save Record
-        </button>
-      </div>
     </div>
   </div>
 
@@ -184,13 +154,15 @@
             <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Magnet Serial</th>
             <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200 text-center">Cycle Time</th>
             <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200 text-center">Result</th>
-            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Shift</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200 text-center">Status</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Started</th>
+            <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Ended</th>
             <th class="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 border-b border-slate-200">Timestamp</th>
           </tr>
         </thead>
         <tbody id="records-tbody" class="divide-y divide-slate-100">
           <tr>
-            <td colspan="6" class="px-5 py-6 text-center text-slate-400 text-xs">Loading records...</td>
+            <td colspan="9" class="px-5 py-6 text-center text-slate-400 text-xs">Loading records...</td>
           </tr>
         </tbody>
       </table>
@@ -202,117 +174,19 @@
 
 {% block scripts %}
 // ── State ──────────────────────────────────────────────────────────────────
-let currentShift = '';
-let lastSavedStackSerial = null;
-let isSaving = false;
+let cycleActive = false;        // both serials present, cycle not yet saved
 const magnetScanState = new ScanStateMachine('magnet-scan-state', {
   readyText: 'Waiting for PLC scanner input',
 });
-let manualProcessOverride = false;
 let plcState = {
   connected: false,
-  cycle_complete: false,
+  run: false,
+  done: false,
   pass_fail: null,
   cycle_time: null,
   magnet_serial: null,
   stack_serial: null
 };
-
-// ── Save Button Logic ──────────────────────────────────────────────────────
-function checkSaveEnabled() {
-  const btn = document.getElementById('save-btn');
-  // Require real PLC pass/fail and cycle time — do not save stub defaults.
-  const enabled = plcState.cycle_complete
-    && plcState.stack_serial
-    && plcState.magnet_serial
-    && plcState.pass_fail !== null
-    && plcState.cycle_time !== null;
-  btn.disabled = !enabled;
-}
-
-function applyManualProcessData() {
-  const cycleInput = document.getElementById('manual-cycle-time');
-  const resultInput = document.getElementById('manual-result');
-  const cycle = Number(cycleInput.value);
-  manualProcessOverride = cycleInput.value !== '' || resultInput.value !== '';
-  plcState.cycle_time = Number.isFinite(cycle) && cycle > 0 ? cycle : null;
-  plcState.pass_fail = resultInput.value === 'pass' ? true : resultInput.value === 'fail' ? false : null;
-  updatePlcUI();
-}
-
-function resetManualProcessData() {
-  manualProcessOverride = false;
-  document.getElementById('manual-cycle-time').value = '';
-  document.getElementById('manual-result').value = '';
-}
-
-async function saveRecord() {
-  if (isSaving) return;
-  const btn = document.getElementById('save-btn');
-
-  if (!plcState.stack_serial || !plcState.magnet_serial) {
-    magnetScanState.ready('Waiting for both PLC scanner codes');
-    return;
-  }
-
-  isSaving = true;
-  magnetScanState.reading('Saving scanned magnet and stack pair');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-lg">progress_activity</span> Saving...';
-
-  try {
-    const payload = {
-      stack_serial: plcState.stack_serial,
-      magnet_serial: plcState.magnet_serial,
-      cycle_time: plcState.cycle_time,
-      pass_fail: plcState.pass_fail,
-      shift: currentShift,
-    };
-    console.info('[magnet] saving record', payload);
-    const res = await fetch('/api/magnet-insertion/create/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    const data = await res.json();
-    console.info('[magnet] save response', res.status, data);
-
-    if (res.ok) {
-      if (data.duplicate) {
-        magnetScanState.duplicate('This magnet and stack pair was already recorded', 2400);
-      } else if (data.pass_fail === false) {
-        magnetScanState.rejected('Cycle saved with FAIL result', 2400);
-      } else {
-        magnetScanState.accepted('Magnet insertion cycle accepted', 2000);
-      }
-      lastSavedStackSerial = plcState.stack_serial;
-
-      // Reset PLC display for next cycle
-      plcState.cycle_complete = false;
-      plcState.pass_fail = null;
-      plcState.cycle_time = null;
-      plcState.magnet_serial = null;
-      plcState.stack_serial = null;
-      resetManualProcessData();
-      updatePlcUI();
-
-      // Reload records and stats
-      loadRecords();
-      loadStats();
-    } else {
-      if (res.status === 409) magnetScanState.duplicate(data.detail || 'Duplicate scan pair');
-      else magnetScanState.rejected(data.detail || 'Scanned pair was rejected');
-    }
-  } catch (err) {
-    magnetScanState.rejected('Connection error. Scan was not saved.');
-    console.error('Save error:', err);
-  }
-
-  btn.innerHTML = '<span class="material-symbols-outlined text-lg">save</span> Save Record';
-  isSaving = false;
-  checkSaveEnabled();
-}
 
 // ── PLC UI Update ──────────────────────────────────────────────────────────
 function updatePlcUI() {
@@ -324,10 +198,11 @@ function updatePlcUI() {
   const cycleEl = document.getElementById('plc-cycle-complete');
   const timeEl = document.getElementById('plc-cycle-time');
   const resultEl = document.getElementById('plc-result-badge');
+  const runEl = document.getElementById('plc-run-flag');
+  const doneEl = document.getElementById('plc-done-flag');
   const magnetEl = document.getElementById('display-magnet-serial');
   const stackEl = document.getElementById('display-stack-serial');
 
-  // Connection state
   if (plcState.connected) {
     dot.className = 'h-2.5 w-2.5 rounded-full bg-[#3DAA6D] animate-pulse';
     label.textContent = 'PLC Connected';
@@ -346,7 +221,6 @@ function updatePlcUI() {
     connBadge.className = 'flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg';
   }
 
-  // Scanned serials
   magnetEl.textContent = plcState.magnet_serial || '—';
   magnetEl.className = plcState.magnet_serial
     ? 'text-lg font-mono font-bold text-[#3DAA6D] mt-1'
@@ -357,16 +231,30 @@ function updatePlcUI() {
     ? 'text-lg font-mono font-bold text-[#3DAA6D] mt-1'
     : 'text-lg font-mono font-bold text-slate-300 mt-1';
 
-  // Cycle state
-  cycleEl.textContent = plcState.cycle_complete ? 'COMPLETE' : '—';
-  cycleEl.className = plcState.cycle_complete
+  cycleEl.textContent = plcState.done ? 'DONE' : (plcState.run ? 'RUNNING' : '—');
+  cycleEl.className = plcState.done
     ? 'text-xs font-bold text-[#3DAA6D]'
-    : 'text-xs font-bold text-slate-500';
+    : plcState.run
+      ? 'text-xs font-bold text-[#f59e0b]'
+      : 'text-xs font-bold text-slate-500';
 
-  // Cycle time
-  timeEl.textContent = plcState.cycle_time !== null ? plcState.cycle_time.toFixed(1) + ' s' : '— s';
+  if (runEl) {
+    runEl.textContent = plcState.run ? 'RUN' : '—';
+    runEl.className = plcState.run
+      ? 'text-xs font-bold text-[#f59e0b]'
+      : 'text-xs font-bold text-slate-500';
+  }
+  if (doneEl) {
+    doneEl.textContent = plcState.done ? 'DONE' : '—';
+    doneEl.className = plcState.done
+      ? 'text-xs font-bold text-[#3DAA6D]'
+      : 'text-xs font-bold text-slate-500';
+  }
 
-  // Result badge
+  timeEl.textContent = plcState.cycle_time !== null && plcState.cycle_time !== undefined
+    ? plcState.cycle_time.toFixed(1) + ' s'
+    : '— s';
+
   if (plcState.pass_fail === true) {
     resultEl.innerHTML = '<span class="inline-flex items-center gap-1 text-[11px] font-bold bg-green-100 text-[#3DAA6D] px-2 py-0.5 rounded-full"><span class="h-1.5 w-1.5 rounded-full bg-[#3DAA6D]"></span>PASS</span>';
   } else if (plcState.pass_fail === false) {
@@ -374,121 +262,72 @@ function updatePlcUI() {
   } else {
     resultEl.innerHTML = '<span class="text-xs font-bold text-slate-400">—</span>';
   }
-
-  checkSaveEnabled();
 }
 
-// ── PLC Polling ────────────────────────────────────────────────────────────
-// Poll the PLC endpoint to get: magnet_serial, stack_serial, cycle_complete,
-// cycle_time, pass_fail.
-
-// The PLC exposes the scanner values as short pulses. Latch the last non-null
-// value from each scanner, and latch cycle_complete, until the record is saved.
-let pollInFlight = false;
+// ── PLC Polling (state machine) ────────────────────────────────────────────
+// Polls the PLC every second. Serials and live values are cached in plcState
+// (memory). The server saves each cycle when the PLC OK/NG counter increases.
+// Nothing is written to the DB on scan.
 setInterval(async () => {
-  if (isSaving || pollInFlight) return;
-  pollInFlight = true;
-  const previous = {
-    magnet: plcState.magnet_serial,
-    stack: plcState.stack_serial,
-    complete: plcState.cycle_complete,
-    time: plcState.cycle_time,
-    result: plcState.pass_fail,
-  };
   try {
     const res = await fetch('/api/magnet-insertion/status/');
-    if (res.ok) {
-      const data = await res.json();
-      if (data.connected) {
-        const incomingMagnet = data.magnet_serial || null;
-        const incomingStack = data.stack_serial || null;
-
-        // A new magnet code starts a new cycle and invalidates the old stack.
-        if (incomingMagnet && incomingMagnet !== plcState.magnet_serial) {
-          plcState.magnet_serial = incomingMagnet;
-          plcState.stack_serial = incomingStack;
-          plcState.cycle_complete = false;
-          plcState.pass_fail = null;
-          plcState.cycle_time = null;
-          resetManualProcessData();
-        }
-
-        // Latch short-lived scanner pulses instead of letting the next empty poll
-        // erase them.
-        if (incomingStack && incomingStack !== plcState.stack_serial) {
-          plcState.stack_serial = incomingStack;
-        }
-
-        plcState.connected = true;
-        plcState.cycle_complete = plcState.cycle_complete
-          || data.cycle_complete
-          || !!(plcState.magnet_serial && plcState.stack_serial);
-
-        // PLC values override stale values, but never erase a manual fallback
-        // or a value latched from an earlier poll in this cycle.
-        if (data.cycle_time !== null && data.cycle_time !== undefined) {
-          plcState.cycle_time = data.cycle_time;
-        }
-        if (data.pass_fail !== null && data.pass_fail !== undefined) {
-          plcState.pass_fail = data.pass_fail;
-        }
-
-        if (previous.magnet !== plcState.magnet_serial
-            || previous.stack !== plcState.stack_serial
-            || previous.complete !== plcState.cycle_complete
-            || previous.time !== plcState.cycle_time
-            || previous.result !== plcState.pass_fail) {
-          console.info('[magnet] plc state', {
-            magnet_serial: plcState.magnet_serial,
-            stack_serial: plcState.stack_serial,
-            cycle_complete: plcState.cycle_complete,
-            cycle_time: plcState.cycle_time,
-            pass_fail: plcState.pass_fail,
-          });
-        }
-
-        if (plcState.stack_serial || plcState.magnet_serial) {
-          magnetScanState.reading(
-            plcState.stack_serial && plcState.magnet_serial
-              ? 'Both codes read; waiting for cycle result'
-              : 'First code read; scan the second code'
-          );
-        } else if (magnetScanState.state === 'reading') {
-          magnetScanState.ready();
-        }
-
-        // Auto-save only when the latched cycle has every required value.
-        if (plcState.cycle_complete
-            && plcState.stack_serial
-            && plcState.magnet_serial
-            && plcState.pass_fail !== null
-            && plcState.cycle_time !== null) {
-          if (plcState.stack_serial !== lastSavedStackSerial) {
-            updatePlcUI();
-            await saveRecord();
-            return;
-          }
-        }
-      } else {
-        plcState.connected = false;
-      }
-    } else {
+    if (!res.ok) {
       plcState.connected = false;
+      updatePlcUI();
+      return;
     }
-  } catch (err) {
-    plcState.connected = false;
-    console.error('[magnet] status poll failed', err);
-  } finally {
-    pollInFlight = false;
-  }
-  updatePlcUI();
-}, 200);
+    const data = await res.json();
 
-// ── Records Table ──────────────────────────────────────────────────────────
+    if (!data.connected) {
+      plcState.connected = false;
+      updatePlcUI();
+      return;
+    }
+
+    plcState.connected = true;
+    plcState.magnet_serial = data.magnet_serial;
+    plcState.stack_serial = data.stack_serial;
+    plcState.run = data.run === true;
+    plcState.done = data.done === true;
+    if (data.pass_fail !== null && data.pass_fail !== undefined) plcState.pass_fail = data.pass_fail;
+    if (data.cycle_time !== null && data.cycle_time !== undefined) plcState.cycle_time = data.cycle_time;
+    updatePlcUI();
+
+    if (data.magnet_serial || data.stack_serial) {
+      if (!cycleActive) {
+        cycleActive = true;
+        magnetScanState.reading(
+          data.magnet_serial && data.stack_serial
+            ? 'Both codes read; waiting for cycle to finish'
+            : 'First code read; scan the second code'
+        );
+      }
+    }
+
+    // The server saved this cycle when the PLC counter increased.
+    if (data.just_saved) {
+      cycleActive = false;
+      magnetScanState.accepted('Cycle saved', 2000);
+      loadRecords();
+      loadStats();
+    }
+
+    // Server cleared the serials: machine reset or cycle ended without a save.
+    if (cycleActive && !data.magnet_serial && !data.stack_serial && !data.run && !data.saved && !data.just_saved) {
+      cycleActive = false;
+      magnetScanState.ready('Cycle aborted. Ready for next cycle.');
+    }
+  } catch {
+    plcState.connected = false;
+    updatePlcUI();
+  }
+}, 1000);
+
+// ── Records Table (history from DB) ────────────────────────────────────────
 async function loadRecords() {
   try {
     const res = await fetch('/api/magnet-insertion/');
-    await requireOk(res, 'Unable to load magnet insertion records');
+    if (!res.ok) throw new Error('Unable to load records');
     const data = await res.json();
     const records = Array.isArray(data) ? data : data.results;
     renderTable(records);
@@ -500,7 +339,7 @@ async function loadRecords() {
 async function loadStats() {
   try {
     const res = await fetch('/api/magnet-insertion/stats/');
-    await requireOk(res, 'Unable to load magnet insertion statistics');
+    if (!res.ok) throw new Error('Unable to load statistics');
     const data = await res.json();
     document.getElementById('kpi-total').textContent = data.total;
     document.getElementById('kpi-passed').textContent = data.passed;
@@ -518,36 +357,55 @@ function renderTable(data) {
   tableCount.textContent = data.length + ' records';
 
   if (data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="px-5 py-6 text-center text-slate-400 text-xs">No records yet. Records will appear here after PLC cycle completion.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="px-5 py-6 text-center text-slate-400 text-xs">No records yet. Cycles appear here after completion.</td></tr>';
     return;
   }
 
+  const statusLabel = (s) => {
+    const map = {
+      'OK': { text: 'OK', cls: 'text-[#3DAA6D]' },
+      'NOK': { text: 'NOK', cls: 'text-[#e74c3c]' },
+    };
+    return map[s] || { text: s || '—', cls: 'text-slate-500' };
+  };
+
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime())
+      ? '—'
+      : parsed.toLocaleString('en-IN', { hour12: false });
+  };
+
   const rows = data.map(r => {
-    const isPass = r.pass_fail;
-    const bColor = isPass ? 'bg-green-100 text-[#3DAA6D]' : 'bg-red-100 text-[#e74c3c]';
-    const dotColor = isPass ? 'bg-[#3DAA6D]' : 'bg-[#e74c3c]';
-    const ts = r.timestamp ? new Date(r.timestamp).toLocaleString('en-IN', { hour12: false }) : '—';
+    const result = statusLabel(r.result || r.status);
+    const status = r.status || '—';
+    const cycleTime = typeof r.cycle_time === 'number' && Number.isFinite(r.cycle_time)
+      ? `${r.cycle_time.toFixed(1)} s`
+      : '—';
 
     return `
       <tr class="hover:bg-[#F8F9FA] transition-all">
         <td class="px-5 py-3">
-          <span class="font-mono font-medium text-[#3DAA6D] text-sm">${escapeHtml(r.stack_serial)}</span>
+          <span class="font-mono font-medium text-[#3DAA6D] text-sm">${escapeHtml(r.stack_serial || '—')}</span>
         </td>
         <td class="px-5 py-3">
-          <span class="font-mono font-medium text-slate-700 text-sm">${escapeHtml(r.magnet_serial)}</span>
+          <span class="font-mono font-medium text-slate-700 text-sm">${escapeHtml(r.magnet_serial || '—')}</span>
         </td>
         <td class="px-5 py-3 text-center">
-          <span class="font-mono text-sm text-slate-700">${r.cycle_time !== null ? r.cycle_time.toFixed(1) : '—'} s</span>
+          <span class="font-mono text-sm text-slate-700">${cycleTime}</span>
         </td>
         <td class="px-5 py-3 text-center">
-          <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${bColor} px-2.5 py-1 rounded-full shadow-sm">
-            <span class="h-1.5 w-1.5 rounded-full ${dotColor}"></span>${escapeHtml(r.result)}
+          <span class="inline-flex items-center gap-1.5 text-[11px] font-bold ${result.cls} px-2.5 py-1 rounded-full shadow-sm">
+            ${escapeHtml(result.text)}
           </span>
         </td>
         <td class="px-5 py-3 text-center">
-          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-600">${escapeHtml(r.shift)}</span>
+          <span class="text-xs font-bold text-slate-600">${escapeHtml(status)}</span>
         </td>
-        <td class="px-5 py-3 text-sm text-slate-500">${escapeHtml(ts)}</td>
+        <td class="px-5 py-3 text-sm text-slate-500">${escapeHtml(formatDate(r.start_time))}</td>
+        <td class="px-5 py-3 text-sm text-slate-500">${escapeHtml(formatDate(r.end_time))}</td>
+        <td class="px-5 py-3 text-sm text-slate-500">${escapeHtml(formatDate(r.timestamp))}</td>
       </tr>
     `;
   });
@@ -555,21 +413,7 @@ function renderTable(data) {
   tbody.innerHTML = rows.join('');
 }
 
-// ── Auto-update shift based on current time ────────────────────────────────
-function updateCurrentShift() {
-  // Hardcoded to 'G' for now per requirements
-  currentShift = 'G';
-  
-  const display = document.getElementById('current-shift-display');
-  if (display) {
-    display.textContent = currentShift;
-  }
-}
-// setInterval(updateCurrentShift, 60000);
-
-// ── Initialize ─────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
-  updateCurrentShift();
   loadRecords();
   loadStats();
   updatePlcUI();

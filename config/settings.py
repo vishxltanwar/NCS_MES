@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     # Local
-    'core',
+    'core.apps.CoreConfig',
 ]
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
@@ -150,42 +150,32 @@ LASER_SERIAL_FILE = os.getenv('LASER_SERIAL_FILE', '').strip()
 SCANNER_PORT = os.getenv('SCANNER_PORT', 'COM1').strip()
 SCANNER_BAUDRATE = int(os.getenv('SCANNER_BAUDRATE', 115200))
 SCANNER_TIMEOUT = float(os.getenv('SCANNER_TIMEOUT', 1))
-# The magnet insertion PLC at the Halol plant. Override with PLC_HOST when the
-# machine is moved or when the deployment runs on a different network.
-DEFAULT_PLC_HOST = '192.168.3.10'
-PLC_HOST = os.getenv('PLC_HOST', '').strip() or DEFAULT_PLC_HOST
+PLC_HOST = os.getenv('PLC_HOST', '').strip()
 PLC_PORT = int(os.getenv('PLC_PORT', 502))
 PLC_TIMEOUT = float(os.getenv('PLC_TIMEOUT', 1))
-PLC_MAGNET_SERIAL_REGISTER = int(os.getenv('PLC_MAGNET_SERIAL_REGISTER', 3230))
-PLC_STACK_SERIAL_REGISTER = int(os.getenv('PLC_STACK_SERIAL_REGISTER', 3260))
-PLC_SCANNER_BUFFER_REGISTER = int(os.getenv('PLC_SCANNER_BUFFER_REGISTER', 3200))
-PLC_SERIAL_REGISTER_COUNT = int(os.getenv('PLC_SERIAL_REGISTER_COUNT', 15))
-PLC_STATE_PATH = os.getenv('PLC_STATE_PATH', '/tmp/mes_plc_status.json')
-PLC_LOCK_PATH = os.getenv('PLC_LOCK_PATH', '/tmp/mes_plc_poller.lock')
-PLC_POLL_MIN_INTERVAL = float(os.getenv('PLC_POLL_MIN_INTERVAL', 0.1))
-PLC_DEBUG_REGISTERS = env_bool('PLC_DEBUG_REGISTERS', False)
+# ── PLC Modbus register addresses (from changes.csv scan) ─────────────────────
+# Override through the environment if the PLC register map changes.
+PLC_REG_MAGNET_SERIAL = int(os.getenv('PLC_REG_MAGNET_SERIAL', '3230'))
+PLC_REG_STACK_SERIAL = int(os.getenv('PLC_REG_STACK_SERIAL', '3260'))
+PLC_REG_RUN = int(os.getenv('PLC_REG_RUN', '10'))            # state code
+PLC_REG_CYCLE_TIME = int(os.getenv('PLC_REG_CYCLE_TIME', '60'))  # tenths of sec (LHS D60)
+# ── Counter-based save trigger (FX5U, 32-bit holding regs, low word first) ───
+PLC_REG_LHS_OK_COUNTER = int(os.getenv('PLC_REG_LHS_OK_COUNTER', '500'))   # D500-501
+PLC_REG_LHS_NG_COUNTER = int(os.getenv('PLC_REG_LHS_NG_COUNTER', '502'))   # D502-503
+PLC_REG_RHS_OK_COUNTER = int(os.getenv('PLC_REG_RHS_OK_COUNTER', '504'))   # D504-505
+PLC_REG_RHS_NG_COUNTER = int(os.getenv('PLC_REG_RHS_NG_COUNTER', '506'))   # D506-507
+PLC_REG_RHS_CYCLE_TIME = int(os.getenv('PLC_REG_RHS_CYCLE_TIME', '62'))    # D62 tenths
+PLC_REG_RHS_STATUS = int(os.getenv('PLC_REG_RHS_STATUS', '11'))            # D11
+PLC_RHS_ENABLED = env_bool('PLC_RHS_ENABLED', False)
 
-
-def _optional_plc_int(name):
-    value = os.getenv(name, '').strip()
-    return int(value) if value else None
-
-
-def _optional_plc_float(name):
-    value = os.getenv(name, '').strip()
-    return float(value) if value else None
-
-
-# Cycle metadata addresses are deployment-specific. Leave them unset until the
-# PLC register map is confirmed; the status endpoint will then keep returning
-# null for that field instead of recording a guessed PASS/time.
-PLC_CYCLE_TIME_REGISTER = _optional_plc_int('PLC_CYCLE_TIME_REGISTER')
-PLC_CYCLE_TIME_SCALE = _optional_plc_float('PLC_CYCLE_TIME_SCALE') or 1.0
-PLC_RESULT_REGISTER = _optional_plc_int('PLC_RESULT_REGISTER')
-PLC_RESULT_PASS_VALUE = _optional_plc_int('PLC_RESULT_PASS_VALUE')
-PLC_RESULT_FAIL_VALUE = _optional_plc_int('PLC_RESULT_FAIL_VALUE')
-PLC_CYCLE_COMPLETE_REGISTER = _optional_plc_int('PLC_CYCLE_COMPLETE_REGISTER')
-PLC_CYCLE_COMPLETE_BIT = _optional_plc_int('PLC_CYCLE_COMPLETE_BIT')
+# ── Logging ───────────────────────────────────────────────────────────────────
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {'plain': {'format': '%(asctime)s %(levelname)s %(name)s %(message)s'}},
+    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},
+    'loggers': {'core': {'handlers': ['console'], 'level': 'INFO', 'propagate': False}},
+}
 
 # ── Default PK ────────────────────────────────────────────────────────────────
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
