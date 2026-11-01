@@ -16,6 +16,7 @@ from .models import (
     StatorTestingRecord,
     MotorAssembly,
     MagnetInsertion,
+    OperationRecord,
 )
 
 logger = logging.getLogger(__name__)
@@ -142,5 +143,6 @@ for _model in (
     StatorTestingRecord,
     MotorAssembly,
     MagnetInsertion,
+    OperationRecord,
 ):
     _register_audit(_model)

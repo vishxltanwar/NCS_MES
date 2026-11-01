@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ncs@123
+      POSTGRES_DB: napino_mes_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d napino_mes_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - DEBUG=True
+      - SECRET_KEY=django-insecure-dev-testing-key-napino-mes
+      - ALLOWED_HOSTS=*
+      - CSRF_TRUSTED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000,http://172.16.48.166:8000
+      - DB_NAME=napino_mes_dev
+      - DB_USER=postgres
+      - DB_PASSWORD=ncs@123
+      - DB_HOST=db
+      - DB_PORT=5432
+      - PLC_HOST=${PLC_HOST:-192.168.3.10}
+      - SECURE_SSL_REDIRECT=False
+      - SESSION_COOKIE_SECURE=False
+      - CSRF_COOKIE_SECURE=False
+      - MES_SEED_USERNAME=admin
+      - MES_SEED_PASSWORD=admin
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py seed_users &&
+             python manage.py seed_final_inspection_parameters &&
+             python manage.py runserver 0.0.0.0:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  dev_postgres_data:

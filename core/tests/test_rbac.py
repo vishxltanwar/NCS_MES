@@ -36,7 +36,7 @@ class RoleBasedAccessTests(TestCase):
         self.assertContains(response, 'Current job:')
         self.assertContains(response, 'Station locked')
         self.assertNotContains(response, '<aside')
-        self.assertNotContains(response, 'Machines Overview')
+        self.assertNotContains(response, 'Production')
 
     def test_supervisor_station_page_keeps_full_navigation(self):
         user = self.make_user('supervisor')
@@ -47,7 +47,7 @@ class RoleBasedAccessTests(TestCase):
         self.assertFalse(response.context['is_station_mode'])
         self.assertEqual(response.context['base_template'], 'core/base.html')
         self.assertContains(response, '<aside')
-        self.assertContains(response, 'Machines Overview')
+        self.assertContains(response, 'Production')
 
     def test_station_terminal_session_flag_enables_locked_layout(self):
         user = self.make_user('supervisor')

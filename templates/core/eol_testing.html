@@ -1,0 +1,89 @@
+{% extends "core/base.html" %}
+{% block title %}EOL Testing | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block content %}
+<div class="station-page max-w-[1100px] mx-auto px-8 py-6 space-y-5">
+  <div class="station-page-header">
+    <h2 class="text-2xl font-bold text-slate-900">EOL Testing</h2>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Motor Assembly (temp id)</label>
+        <input id="serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Operation</label>
+        <select id="op" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg">
+          <option value="MOTOR_OP90">OP90 Motor EOL test</option>
+          <option value="MOTOR_OP10">OP10 Front lid and stator assembly</option>
+          <option value="MOTOR_OP70">OP70 Resistance, HV, and IR test</option>
+          <option value="MOTOR_OP100">OP100 4Q EOL test</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid grid-cols-3 gap-4">
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Rotor Serial (for OP10)</label>
+        <input id="rotor_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Stator Serial (for OP10)</label>
+        <input id="stator_serial" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div>
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Result</label>
+        <select id="result" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg">
+          <option value="Pass">Pass</option>
+          <option value="Fail">Fail</option>
+        </select>
+      </div>
+    </div>
+    <div>
+      <label class="text-xs font-bold text-slate-600 uppercase tracking-wider">Notes</label>
+      <input id="notes" type="text" class="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg" />
+    </div>
+    <button onclick="recordOp()" class="px-4 py-2 bg-primary text-white font-bold rounded-lg">Record EOL Test</button>
+    <div id="msg" class="text-sm"></div>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <h3 class="font-bold text-slate-900 mb-3">Completed</h3>
+    <div id="completed" class="text-sm text-slate-600">None</div>
+    <button onclick="loadOps()" class="mt-2 text-xs text-primary font-bold">Load</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+async function recordOp() {
+  const serial = document.getElementById('serial').value.trim().toUpperCase();
+  const op = document.getElementById('op').value;
+  const result = document.getElementById('result').value;
+  const notes = document.getElementById('notes').value.trim();
+  const body = { entity_type: 'motor', serial_number: serial, operation_code: op, result: result, notes: notes };
+  if (op === 'MOTOR_OP10') {
+    body.data = {
+      rotor_serial: document.getElementById('rotor_serial').value.trim().toUpperCase(),
+      stator_serial: document.getElementById('stator_serial').value.trim().toUpperCase(),
+    };
+  }
+  const res = await fetch('/api/operations/record/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  document.getElementById('msg').textContent = res.ok ? (data.duplicate ? 'Already recorded' : 'Recorded') : (data.detail || 'Failed');
+  if (res.ok) loadOps();
+}
+async function loadOps() {
+  const serial = document.getElementById('serial').value.trim().toUpperCase();
+  if (!serial) return;
+  const res = await fetch('/api/operations/by-serial/motor/' + encodeURIComponent(serial) + '/');
+  const data = await res.json();
+  if (!res.ok) { document.getElementById('completed').textContent = data.detail || 'Error'; return; }
+  document.getElementById('completed').innerHTML = (data.completed || []).map(c => '<span class="inline-block px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-bold mr-1 mb-1">' + c + '</span>').join('') || 'None';
+}
+{% endblock %}

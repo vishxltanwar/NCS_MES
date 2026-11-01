@@ -1,0 +1,163 @@
+{% extends "core/base.html" %}
+{% block title %}Final Inspection Records | NAPINO CONTROL SYSTEMS{% endblock %}
+
+{% block content %}
+<div class="max-w-[1400px] mx-auto px-8 py-6 space-y-5">
+  <div class="station-page-header">
+    <h2 class="text-2xl font-bold text-slate-900">Final Inspection Records</h2>
+    <a href="/final-inspection" class="text-xs text-primary font-bold hover:underline">Back to Entry</a>
+  </div>
+
+  <div class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+    <div class="flex flex-wrap items-end gap-3">
+      <div class="flex-1 min-w-[180px]">
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1">Search motor serial</label>
+        <input id="search-serial" type="text" placeholder="Motor serial..." class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div class="min-w-[160px]">
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1">Status</label>
+        <select id="filter-status" class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono">
+          <option value="">All</option>
+          <option value="Draft">Draft</option>
+          <option value="Completed">Completed</option>
+        </select>
+      </div>
+      <div class="min-w-[160px]">
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1">Overall</label>
+        <select id="filter-overall" class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono">
+          <option value="">All</option>
+          <option value="Pass">Pass</option>
+          <option value="Fail">Fail</option>
+          <option value="NA">NA</option>
+        </select>
+      </div>
+      <div class="min-w-[140px]">
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1">From</label>
+        <input id="filter-start" type="date" class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div class="min-w-[140px]">
+        <label class="text-xs font-bold text-slate-600 uppercase tracking-wider block mb-1">To</label>
+        <input id="filter-end" type="date" class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono" />
+      </div>
+      <div class="flex items-end">
+        <button onclick="loadRecords(1)" class="w-full px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50">Search</button>
+        <a id="btn-export" class="w-full px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-primary hover:bg-slate-50">Export Excel</a>
+      </div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="border-b border-slate-200 text-slate-500">
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Motor Serial</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Attempt</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Stator</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Rotor</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Enc No</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Status</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Overall</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Inspector</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Inspected At</th>
+            <th class="text-left py-3 px-4 font-bold text-[10px] uppercase">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="records-body"></tbody>
+      </table>
+    </div>
+
+    <div id="records-pagination" class="flex items-center justify-between text-xs text-slate-600"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+let currentUrl = '/api/final-inspection/';
+
+function statusBadge(status) {
+  const colors = { Draft: 'bg-amber-50 text-amber-700', Completed: 'bg-green-50 text-green-700' };
+  return `<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${colors[status] || 'bg-slate-100 text-slate-500'}">${status}</span>`;
+}
+
+function overallBadge(overall) {
+  const colors = { Pass: 'bg-green-50 text-green-700', Fail: 'bg-red-50 text-red-700', NA: 'bg-slate-100 text-slate-500' };
+  return `<span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold ${colors[overall] || 'bg-slate-100 text-slate-500'}">${overall}</span>`;
+}
+
+function filterQuery() {
+  const params = new URLSearchParams();
+  const search = document.getElementById('search-serial').value.trim();
+  if (search) params.set('motor_serial', search);
+  const status = document.getElementById('filter-status').value;
+  if (status) params.set('status', status);
+  const overall = document.getElementById('filter-overall').value;
+  if (overall) params.set('overall', overall);
+  const start = document.getElementById('filter-start').value;
+  if (start) params.set('start_date', start);
+  const end = document.getElementById('filter-end').value;
+  if (end) params.set('end_date', end);
+  params.set('page_size', '50');
+  return params.toString();
+}
+
+async function loadRecords(page = 1) {
+  const qs = filterQuery();
+  const url = `/api/final-inspection/?${qs}&page=${page}`;
+  currentUrl = url;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) { showToast('Unable to load records', 'error'); return; }
+    const data = await res.json();
+    renderRecords(data);
+  } catch (err) {
+    showToast('Unable to load records', 'error');
+  }
+}
+
+function renderRecords(data) {
+  const body = document.getElementById('records-body');
+  body.innerHTML = '';
+  const results = data.results || [];
+  if (results.length === 0) {
+    body.innerHTML = `<tr><td colspan="10" class="py-8 text-center text-slate-500">No records found</td></tr>`;
+  } else {
+    for (const r of results) {
+      const tr = document.createElement('tr');
+      tr.className = 'border-b border-slate-100';
+      tr.innerHTML = `
+        <td class="py-3 px-4 font-mono text-slate-900">${escapeHtml(r.motor_serial)}</td>
+        <td class="py-3 px-4 text-slate-700">${r.attempt_no}</td>
+        <td class="py-3 px-4 font-mono text-slate-700">${escapeHtml(r.stator_serial || '')}</td>
+        <td class="py-3 px-4 font-mono text-slate-700">${escapeHtml(r.rotor_serial || '')}</td>
+        <td class="py-3 px-4 font-mono text-slate-700">${escapeHtml(r.enc_no || '')}</td>
+        <td class="py-3 px-4">${statusBadge(r.status)}</td>
+        <td class="py-3 px-4">${overallBadge(r.overall_result)}</td>
+        <td class="py-3 px-4 text-slate-700">${escapeHtml(r.inspector || '')}</td>
+        <td class="py-3 px-4 font-mono text-slate-700">${r.inspected_at || ''}</td>
+        <td class="py-3 px-4">
+          <a href="/final-inspection/records/${r.id}" class="text-xs text-primary font-bold hover:underline mr-2">View</a>
+          <a href="/api/final-inspection/${r.id}/export/?format=xlsx" class="text-xs text-slate-600 font-bold hover:underline">Export</a>
+        </td>
+      `;
+      body.appendChild(tr);
+    }
+  }
+
+  const meta = data;
+  const pag = document.getElementById('records-pagination');
+  let html = `<span>${meta.count || 0} records · page ${meta.page || 1} of ${meta.total_pages || 1}</span>`;
+  html += `<div class="flex gap-2">`;
+  if (meta.has_previous) html += `<button onclick="loadRecords(${meta.page - 1})" class="px-3 py-1 border border-slate-200 rounded text-xs font-bold hover:bg-slate-50">Previous</button>`;
+  if (meta.has_next) html += `<button onclick="loadRecords(${meta.page + 1})" class="px-3 py-1 border border-slate-200 rounded text-xs font-bold hover:bg-slate-50">Next</button>`;
+  html += `</div>`;
+  pag.innerHTML = html;
+
+  const params = new URLSearchParams(filterQuery());
+  params.set('format', 'xlsx');
+  document.getElementById('btn-export').href = `/api/final-inspection/export/?${params.toString()}`;
+}
+
+document.getElementById('search-serial').addEventListener('keypress', function (e) {
+  if (e.key === 'Enter') loadRecords(1);
+});
+loadRecords(1);
+{% endblock %}

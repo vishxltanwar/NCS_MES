@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+__pycache__
+*.py[cod]
+staticfiles
+*.log
+venv
+.venv
+deploy/.env.production

@@ -15,9 +15,20 @@ urlpatterns = [
     path('shift-report', views.shift_report_view, name='shift_report'),
     path('production-log', views.production_log_view, name='production_log'),
     path('rotor-balancing', views.rotor_balancing_view, name='rotor_balancing'),
+    path('rotor-operations', views.rotor_operations_view, name='rotor_operations'),
+    path('front-plate-bearing-assy', views.front_plate_bearing_assy_view, name='front_plate_bearing_assy'),
+    path('front-plate-rotor-assy', views.front_plate_rotor_assy_view, name='front_plate_rotor_assy'),
     path('magnet-insertion', views.magnet_insertion_view, name='magnet_insertion'),
     path('stator-testing', views.stator_testing_view, name='stator_testing'),
     path('motor-assembly', views.motor_assembly_view, name='motor_assembly'),
+    path('eol-testing', views.eol_testing_view, name='eol_testing'),
+    path('final-inspection', views.final_inspection_view, name='final_inspection'),
+    path('final-inspection/records', views.final_inspection_records_view, name='final_inspection_records'),
+    path('final-inspection/records/<int:pk>', views.final_inspection_record_detail_view, name='final_inspection_record_detail'),
+    path('dispatch-release', views.dispatch_release_view, name='dispatch_release'),
+    path('noise-test', views.noise_test_view, name='noise'),
+    path('final-testing', views.eol_testing_4q_view, name='eol_testing_4q'),
+    path('pre-delivery-inspection', views.pre_delivery_inspection_view, name='pre_delivery_inspection'),
 
     # ── Auth API ──────────────────────────────────────────────────────────────
     path('api/login', views.api_login, name='api_login'),
@@ -59,11 +70,30 @@ urlpatterns = [
 
     # Motor Assembly API
     path('api/machines/motor-assembly/', views.api_motor_assembly, name='api_motor_assembly'),
+    path('api/machines/motor-assembly/<int:pk>/assign-serial/', views.api_motor_serial_assign, name='api_motor_serial_assign'),
+
+    # ── Operations API ────────────────────────────────────────────────────────
+    path('api/operations/', views.api_operations_list, name='api_operations_list'),
+    path('api/operations/record/', views.api_operation_record, name='api_operation_record'),
+    path('api/operations/check-sequence/', views.api_operation_check_sequence, name='api_operation_check_sequence'),
+    path('api/operations/by-serial/<str:entity_type>/<str:serial>/', views.api_operations_by_serial, name='api_operations_by_serial'),
 
     # ── Magnet Insertion API ──────────────────────────────────────────────────
     path('api/magnet-insertion/status/', views.api_magnet_insertion_status, name='api_magnet_insertion_status'),
+    path('api/magnet-insertion/cycle/save/', views.api_magnet_insertion_cycle_save, name='api_magnet_insertion_cycle_save'),
+    path('api/magnet-insertion/reset/', views.api_magnet_insertion_reset, name='api_magnet_insertion_reset'),
     path('api/magnet-insertion/', views.api_magnet_insertion_list, name='api_magnet_insertion_list'),
     path('api/magnet-insertion/create/', views.api_magnet_insertion_create, name='api_magnet_insertion_create'),
     path('api/magnet-insertion/stats/', views.api_magnet_insertion_stats, name='api_magnet_insertion_stats'),
     path('api/magnet-insertion/<int:pk>/', views.api_magnet_insertion_delete, name='api_magnet_insertion_delete'),
+    # ── Final Inspection API ──────────────────────────────────────────────
+    path('api/final-inspection/', views.api_final_inspection_list, name='api_final_inspection_list'),
+    path('api/final-inspection/parameters/', views.api_final_inspection_parameters, name='api_final_inspection_parameters'),
+    path('api/final-inspection/export/', views.api_final_inspection_export_list, name='api_final_inspection_export_list'),
+    path('api/final-inspection/assembly-lookup/<str:serial>/', views.api_final_inspection_assembly_lookup, name='api_final_inspection_assembly_lookup'),
+    path('api/final-inspection/by-serial/<str:serial>/', views.api_final_inspection_by_serial, name='api_final_inspection_by_serial'),
+    path('api/final-inspection/<int:pk>/', views.api_final_inspection_detail, name='api_final_inspection_detail'),
+    path('api/final-inspection/<int:pk>/update/', views.api_final_inspection_update, name='api_final_inspection_update'),
+    path('api/final-inspection/<int:pk>/complete/', views.api_final_inspection_complete, name='api_final_inspection_complete'),
+    path('api/final-inspection/<int:pk>/export/', views.api_final_inspection_export, name='api_final_inspection_export'),
 ]

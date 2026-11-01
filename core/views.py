@@ -20,13 +20,20 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 import logging
+import struct
+import threading
+import time
 import openpyxl
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 import pandas as pd
 import datetime as dt
 from django.utils import timezone as django_tz
 from pymodbus.client import ModbusTcpClient
-import struct
-from django.db import DatabaseError, IntegrityError, models, transaction
+from rest_framework import status, serializers
+from .pagination import paginate_queryset
+from django.db.models.functions import RowNumber
+from django.db import models, transaction
 from django.db.models.functions import Lower, RowNumber
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -37,9 +44,14 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Tabl
 from utils.scanner import clean_scan_data
 from .models import (
     DailySerialCounter,
+    FinalInspection,
+    FinalInspectionParameter,
+    FinalInspectionReading,
     LoginThrottle,
     MagnetInsertion,
     MotorAssembly,
+    OperationRecord,
+    OP_FINAL_INSPECTION,
     Part,
     PART_TYPES,
     RotorBalancing,
@@ -58,6 +70,7 @@ from .rbac import (
     user_station,
 )
 from .pagination import paginate_queryset
+from .final_inspection_specs import CALCULATED_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +185,7 @@ def _request_part_type(data, field, *, label):
     return part_type
 
 
-def _render_page(request, template_name, active_page):
+def _render_page(request, template_name, active_page, extra_context=None):
     get_token(request)
     user = _user_ctx(request.user)
     is_station_mode = getattr(request, 'is_station_mode', False)
@@ -184,7 +197,7 @@ def _render_page(request, template_name, active_page):
         'magnet_insertion': 'Monitor and record magnet insertion',
     }
     station = user['station'] or request.session.get('station', '')
-    return render(request, f'core/{template_name}', {
+    context = {
         'user': user,
         'active_page': active_page,
         'allowed_pages': allowed_pages(request.user),
@@ -192,7 +205,10 @@ def _render_page(request, template_name, active_page):
         'base_template': 'core/base_station.html' if is_station_mode else 'core/base.html',
         'station_name': station_names.get(station, station.replace('_', ' ').title()) or 'Station Terminal',
         'current_job': request.session.get('current_job') or station_jobs.get(station, 'Production operation'),
-    })
+    }
+    if extra_context:
+        context.update(extra_context)
+    return render(request, f'core/{template_name}', context)
 
 # ── Page Views ────────────────────────────────────────────────────────────────
 
@@ -261,6 +277,64 @@ def magnet_insertion_view(request):
 @page_access_required('motor_assembly')
 def motor_assembly_view(request):
     return _render_page(request, 'motor_assembly.html', 'motor_assembly')
+
+
+@page_access_required('rotor_operations')
+def rotor_operations_view(request):
+    return _render_page(request, 'stack_and_shaft_pressing.html', 'rotor_operations')
+
+
+@page_access_required('front_plate_bearing_assy')
+def front_plate_bearing_assy_view(request):
+    return _render_page(request, 'front_plate_bearing_assy.html', 'front_plate_bearing_assy')
+
+
+@page_access_required('front_plate_rotor_assy')
+def front_plate_rotor_assy_view(request):
+    return _render_page(request, 'front_plate_rotor_assy.html', 'front_plate_rotor_assy')
+
+
+@page_access_required('eol_testing')
+def eol_testing_view(request):
+    return _render_page(request, 'eol_testing.html', 'eol_testing')
+
+
+@page_access_required('final_inspection')
+def final_inspection_view(request):
+    return _render_page(request, 'final_inspection.html', 'final_inspection')
+
+
+@page_access_required('final_inspection')
+def final_inspection_records_view(request):
+    return _render_page(request, 'final_inspection_records.html', 'final_inspection')
+
+
+@page_access_required('final_inspection')
+def final_inspection_record_detail_view(request, pk):
+    return _render_page(request, 'final_inspection_record_detail.html', 'final_inspection', {'inspection_id': pk})
+
+
+@page_access_required('dispatch_release')
+def dispatch_release_view(request):
+    return _render_page(request, 'dispatch_release.html', 'dispatch_release')
+
+
+@page_access_required('final_testing')
+def eol_testing_4q_view(request):
+    """Separate 4Q final test from the generic EOL page."""
+    return _render_page(request, '4q_testing.html', '4q_testing')
+
+
+@page_access_required('pre_delivery_inspection')
+def pre_delivery_inspection_view(request):
+    """Pre-delivery inspection gate — final check before dispatch."""
+    return _render_page(request, 'pre_delivery_inspection.html', 'pre_delivery_inspection')
+
+
+@page_access_required('noise')
+def noise_test_view(request):
+    """Distinct acoustic noise acceptance test page."""
+    return _render_page(request, 'noise_test.html', 'noise')
 
 
 def _user_ctx(user):
@@ -1042,7 +1116,6 @@ def api_traceability_search(request):
             'cycle_time': magnet.cycle_time,
             'pass_fail': magnet.pass_fail,
             'result': 'PASS' if magnet.pass_fail else 'FAIL',
-            'shift': magnet.shift,
             'operator': magnet.operator.get_full_name() if magnet.operator else '',
             'timestamp': magnet.timestamp.astimezone(IST).isoformat() if magnet.timestamp else '',
         }
@@ -2097,11 +2170,13 @@ def api_magnet_insertion_list(request):
             'id': r.id,
             'stack_serial': r.stack_serial,
             'magnet_serial': r.magnet_serial,
-            'cycle_time': r.cycle_time,
+            'status': r.status,
+            'result': 'OK' if r.status == MagnetInsertion.STATUS_OK else 'NOK',
             'pass_fail': r.pass_fail,
-            'result': 'PASS' if r.pass_fail else 'FAIL',
-            'shift': r.shift,
+            'cycle_time': r.cycle_time,
             'operator': r.operator.get_full_name() if r.operator else '',
+            'start_time': r.start_time.astimezone(IST).isoformat() if r.start_time else '',
+            'end_time': r.end_time.astimezone(IST).isoformat() if r.end_time else '',
             'timestamp': r.timestamp.astimezone(IST).isoformat() if r.timestamp else '',
         })
     return Response({'results': data, **meta})
@@ -2113,7 +2188,6 @@ def api_magnet_insertion_create(request):
     try:
         stack_serial = _request_text(request.data, 'stack_serial', label='Stack serial', max_length=64, upper=True)
         magnet_serial = _request_text(request.data, 'magnet_serial', label='Magnet serial', max_length=64, upper=True)
-        shift = _request_text(request.data, 'shift', max_length=1, upper=True)
     except ValueError as exc:
         return Response({'detail': str(exc)}, status=400)
     cycle_time = request.data.get('cycle_time')
@@ -2127,8 +2201,6 @@ def api_magnet_insertion_create(request):
         return Response({'detail': 'Cycle time is required'}, status=400)
     if not isinstance(pass_fail, bool):
         return Response({'detail': 'pass_fail must be a JSON boolean'}, status=400)
-    if shift not in ('A', 'B', 'C', 'G'):
-        return Response({'detail': 'Shift must be A, B, C, or G'}, status=400)
 
     try:
         cycle_time = float(cycle_time)
@@ -2168,7 +2240,6 @@ def api_magnet_insertion_create(request):
                     'cycle_time': existing.cycle_time,
                     'pass_fail': existing.pass_fail,
                     'result': 'PASS' if existing.pass_fail else 'FAIL',
-                    'shift': existing.shift,
                     'operator': existing.operator.get_full_name() if existing.operator else '',
                     'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
                     'duplicate': True,
@@ -2179,7 +2250,6 @@ def api_magnet_insertion_create(request):
                 magnet_serial=magnet_serial,
                 cycle_time=cycle_time,
                 pass_fail=pass_fail,
-                shift=shift,
                 operator=operator,
             )
     except IntegrityError:
@@ -2196,7 +2266,6 @@ def api_magnet_insertion_create(request):
                 'cycle_time': existing.cycle_time,
                 'pass_fail': existing.pass_fail,
                 'result': 'PASS' if existing.pass_fail else 'FAIL',
-                'shift': existing.shift,
                 'operator': existing.operator.get_full_name() if existing.operator else '',
                 'timestamp': existing.timestamp.astimezone(IST).isoformat() if existing.timestamp else '',
                 'duplicate': True,
@@ -2216,7 +2285,6 @@ def api_magnet_insertion_create(request):
         'cycle_time': record.cycle_time,
         'pass_fail': record.pass_fail,
         'result': 'PASS' if record.pass_fail else 'FAIL',
-        'shift': record.shift,
         'operator': record.operator.get_full_name() if record.operator else '',
         'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
     }, status=201)
@@ -2227,8 +2295,8 @@ def api_magnet_insertion_create(request):
 def api_magnet_insertion_stats(request):
     qs = MagnetInsertion.objects.all()
     total = qs.count()
-    passed = qs.filter(pass_fail=True).count()
-    failed = qs.filter(pass_fail=False).count()
+    passed = qs.filter(status=MagnetInsertion.STATUS_OK).count()
+    failed = qs.filter(status=MagnetInsertion.STATUS_NOK).count()
     yield_pct = round((passed / total) * 100, 1) if total > 0 else 0.0
 
     return Response({
@@ -2252,56 +2320,1682 @@ def api_magnet_insertion_delete(request, pk):
     }, status=409)
 
 
-def _decode_modbus_string(registers):
-    if not registers: return ""
-    b = b''
-    for reg in registers:
-        b += struct.pack('>H', reg)
-    # Strip null bytes and whitespace
-    return b.decode('ascii', errors='ignore').strip('\x00').strip()
+# ══════════════════════════════════════════════════════════════════════════════
+# OPERATION GATES API
+# ══════════════════════════════════════════════════════════════════════════════
+
+from .rbac import can_access_action
+
+OPERATION_CODES_BY_ENTITY = {
+    'rotor': {
+        'MAGNET_INSERTION', 'YOKE_SHAFT_PRESSING', 'ROTOR_BALANCING',
+        'ROTOR_OP70', 'ROTOR_OP80', 'ROTOR_RELEASE',
+    },
+    'stator': {'STATOR_OP120', 'STATOR_RELEASE'},
+    'motor': {
+        'MOTOR_OP10', 'MOTOR_OP70', 'MOTOR_OP90', 'MOTOR_OP100',
+        'MOTOR_SERIAL_ASSIGN', 'MOTOR_OP120', 'FINAL_INSPECTION', 'DISPATCH_RELEASE',
+    },
+}
+
+PREREQUISITES = {
+    'YOKE_SHAFT_PRESSING': ['MAGNET_INSERTION'],
+    'ROTOR_BALANCING': ['YOKE_SHAFT_PRESSING'],
+    'ROTOR_OP70': ['ROTOR_BALANCING'],
+    'ROTOR_OP80': ['ROTOR_OP70'],
+    'ROTOR_RELEASE': ['ROTOR_OP80'],
+    'STATOR_RELEASE': ['STATOR_OP120'],
+    'MOTOR_OP70': ['MOTOR_OP10'],
+    'MOTOR_OP90': ['MOTOR_OP70'],
+    'MOTOR_OP100': ['MOTOR_OP90'],
+    'MOTOR_SERIAL_ASSIGN': ['MOTOR_OP100'],
+    'MOTOR_OP120': ['MOTOR_SERIAL_ASSIGN'],
+    'FINAL_INSPECTION': ['MOTOR_OP120'],
+    'DISPATCH_RELEASE': ['FINAL_INSPECTION'],
+}
+
+OP_WRITE_ACTION = {
+    'MAGNET_INSERTION': 'magnet_write',
+    'YOKE_SHAFT_PRESSING': 'yoke_shaft_write',
+    'ROTOR_BALANCING': 'rotor_write',
+    'ROTOR_OP70': 'rotor_op70_write',
+    'ROTOR_OP80': 'rotor_op80_write',
+    'ROTOR_RELEASE': 'rotor_release_write',
+    'STATOR_OP120': 'stator_op120_write',
+    'STATOR_RELEASE': 'stator_release_write',
+    'MOTOR_OP10': 'motor_op10_write',
+    'MOTOR_OP70': 'motor_op70_write',
+    'MOTOR_OP90': 'motor_op90_write',
+    'MOTOR_OP100': 'motor_op100_write',
+    'MOTOR_SERIAL_ASSIGN': 'motor_serial_assign_write',
+    'MOTOR_OP120': 'motor_op120_write',
+    'FINAL_INSPECTION': 'final_inspection_write',
+    'DISPATCH_RELEASE': 'dispatch_write',
+}
+
+
+def _completed_ops(entity_type, serial):
+    return set(
+        OperationRecord.objects.filter(
+            entity_type=entity_type,
+            serial_number__iexact=serial,
+            status='Completed',
+        ).values_list('operation_code', flat=True)
+    )
+
+
+def _missing_prereqs(entity_type, serial, operation_code):
+    missing = []
+    for prereq in PREREQUISITES.get(operation_code, []):
+        if prereq not in _completed_ops(entity_type, serial):
+            missing.append(prereq)
+    # Cross-entity checks for motor OP10: rotor + stator released
+    if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+        # serial here is motor assembly id context; rotor/stator passed via data
+        pass
+    return missing
+
 
 @api_view(['GET'])
-@api_access_required('magnet_read')
-def api_magnet_insertion_status(request):
+def api_operations_list(request):
+    entity_type = request.query_params.get('entity_type', '').strip()
+    serial = request.query_params.get('serial', '').strip()
+    qs = OperationRecord.objects.all()
+    if entity_type:
+        qs = qs.filter(entity_type=entity_type)
+    if serial:
+        qs = qs.filter(serial_number__iexact=serial)
+    items, meta = paginate_queryset(qs, request, default_page_size=50, max_page_size=200)
+    data = []
+    for r in items:
+        data.append({
+            'id': r.id,
+            'entity_type': r.entity_type,
+            'serial_number': r.serial_number,
+            'operation_code': r.operation_code,
+            'status': r.status,
+            'result': r.result,
+            'recorded_at': r.recorded_at.astimezone(IST).isoformat() if r.recorded_at else '',
+            'operator': r.operator.get_full_name() if r.operator else '',
+            'notes': r.notes,
+            'data': r.data,
+            'created_at': r.created_at.astimezone(IST).isoformat() if r.created_at else '',
+        })
+    return Response({'results': data, **meta})
+
+
+@api_view(['GET'])
+def api_operations_by_serial(request, entity_type, serial):
+    serial = serial.strip()
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if not serial:
+        return Response({'detail': 'Serial is required'}, status=400)
+    records = OperationRecord.objects.filter(
+        entity_type=entity_type, serial_number__iexact=serial
+    ).order_by('-created_at')
+    completed = _completed_ops(entity_type, serial)
+    allowed_next = []
+    for code in OPERATION_CODES_BY_ENTITY[entity_type]:
+        if code in completed:
+            continue
+        if not _missing_prereqs(entity_type, serial, code):
+            allowed_next.append(code)
+    return Response({
+        'entity_type': entity_type,
+        'serial_number': serial,
+        'completed': sorted(completed),
+        'allowed_next': allowed_next,
+        'records': [
+            {
+                'id': r.id,
+                'operation_code': r.operation_code,
+                'status': r.status,
+                'result': r.result,
+                'recorded_at': r.recorded_at.astimezone(IST).isoformat() if r.recorded_at else '',
+                'operator': r.operator.get_full_name() if r.operator else '',
+                'notes': r.notes,
+                'data': r.data,
+            } for r in records
+        ],
+    })
+
+
+@api_view(['POST'])
+def api_operation_check_sequence(request):
+    try:
+        entity_type = _request_text(request.data, 'entity_type', max_length=10)
+        serial = _request_text(request.data, 'serial_number', max_length=64, upper=True)
+        operation_code = _request_text(request.data, 'operation_code', max_length=40, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if operation_code not in OPERATION_CODES_BY_ENTITY[entity_type]:
+        return Response({'detail': 'Invalid operation code for entity type'}, status=400)
+    completed = _completed_ops(entity_type, serial)
+    if operation_code in completed:
+        return Response({'allowed': False, 'reason': 'Operation already completed', 'missing': []})
+    missing = _missing_prereqs(entity_type, serial, operation_code)
+    # Cross-entity checks for motor OP10
+    extra_missing = []
+    if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+        rotor_serial = request.data.get('rotor_serial', '')
+        stator_serial = request.data.get('stator_serial', '')
+        if isinstance(rotor_serial, str):
+            rotor_serial = rotor_serial.strip().upper()
+        if isinstance(stator_serial, str):
+            stator_serial = stator_serial.strip().upper()
+        if not rotor_serial or 'ROTOR_RELEASE' not in _completed_ops('rotor', rotor_serial):
+            extra_missing.append('Rotor not released')
+        if not stator_serial or 'STATOR_RELEASE' not in _completed_ops('stator', stator_serial):
+            extra_missing.append('Stator not released')
+    all_missing = missing + extra_missing
+    return Response({'allowed': not all_missing, 'missing': all_missing})
+
+
+@api_view(['POST'])
+def api_operation_record(request):
+    try:
+        entity_type = _request_text(request.data, 'entity_type', max_length=10)
+        serial_number = _request_text(request.data, 'serial_number', label='Serial number', max_length=64, upper=True)
+        operation_code = _request_text(request.data, 'operation_code', label='Operation code', max_length=40, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    if entity_type not in OPERATION_CODES_BY_ENTITY:
+        return Response({'detail': 'Invalid entity type'}, status=400)
+    if operation_code not in OPERATION_CODES_BY_ENTITY[entity_type]:
+        return Response({'detail': 'Invalid operation code for entity type'}, status=400)
+
+    action = OP_WRITE_ACTION.get(operation_code)
+    if not action or not can_access_action(request.user, action):
+        return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+
+    status_val = request.data.get('status', 'Completed')
+    if status_val not in ('Completed', 'Failed'):
+        status_val = 'Completed'
+    result_val = request.data.get('result', '')
+    if not isinstance(result_val, str):
+        result_val = str(result_val)
+    result_val = result_val.strip()[:10]
+    notes = request.data.get('notes', '')
+    if not isinstance(notes, str):
+        notes = str(notes)
+    notes = notes.strip()[:255]
+    data = request.data.get('data', {})
+    if not isinstance(data, dict):
+        data = {}
+
+    # Prereq check (only for completion)
+    if status_val == 'Completed':
+        missing = _missing_prereqs(entity_type, serial_number, operation_code)
+        extra_missing = []
+        if entity_type == 'motor' and operation_code == 'MOTOR_OP10':
+            rotor_serial = data.get('rotor_serial') or request.data.get('rotor_serial', '')
+            stator_serial = data.get('stator_serial') or request.data.get('stator_serial', '')
+            if isinstance(rotor_serial, str):
+                rotor_serial = rotor_serial.strip().upper()
+            else:
+                rotor_serial = ''
+            if isinstance(stator_serial, str):
+                stator_serial = stator_serial.strip().upper()
+            else:
+                stator_serial = ''
+            # Require an existing motor assembly link for this (temp) serial
+            link = MotorAssembly.objects.filter(motor_serial__iexact=serial_number).first()
+            if not link:
+                extra_missing.append('Motor assembly link required')
+            else:
+                if not rotor_serial:
+                    rotor_serial = link.rotor_serial
+                if not stator_serial:
+                    stator_serial = link.stator_serial
+            if not rotor_serial or 'ROTOR_RELEASE' not in _completed_ops('rotor', rotor_serial):
+                extra_missing.append('Rotor not released')
+            if not stator_serial or 'STATOR_RELEASE' not in _completed_ops('stator', stator_serial):
+                extra_missing.append('Stator not released')
+            data = {**data, 'rotor_serial': rotor_serial, 'stator_serial': stator_serial}
+        all_missing = missing + extra_missing
+        if all_missing:
+            return Response({'detail': 'Prerequisites not met', 'missing': all_missing}, status=400)
+
+        # Motor serial assignment handling
+        if operation_code == 'MOTOR_SERIAL_ASSIGN':
+            final_serial = data.get('final_motor_serial') or request.data.get('final_motor_serial', '')
+            if not isinstance(final_serial, str) or not final_serial.strip():
+                return Response({'detail': 'final_motor_serial is required'}, status=400)
+            final_serial = final_serial.strip().upper()
+            link = MotorAssembly.objects.filter(motor_serial__iexact=serial_number).first()
+            if not link:
+                return Response({'detail': 'Motor assembly link not found'}, status=404)
+            if link.final_motor_serial:
+                return Response({'detail': 'Motor serial already assigned'}, status=409)
+            if MotorAssembly.objects.filter(final_motor_serial__iexact=final_serial).exists():
+                return Response({'detail': 'Final motor serial already in use'}, status=409)
+            link.final_motor_serial = final_serial
+            link.motor_serial_assigned_at = django_tz.now()
+            link.save(update_fields=['final_motor_serial', 'motor_serial_assigned_at'])
+            data = {**data, 'final_motor_serial': final_serial}
+
+    # Idempotency: if already completed, return existing
+    existing = OperationRecord.objects.filter(
+        entity_type=entity_type,
+        serial_number__iexact=serial_number,
+        operation_code=operation_code,
+        status='Completed',
+    ).first()
+    if existing and status_val == 'Completed':
+        return Response({
+            'id': existing.id,
+            'entity_type': existing.entity_type,
+            'serial_number': existing.serial_number,
+            'operation_code': existing.operation_code,
+            'status': existing.status,
+            'duplicate': True,
+        })
+
+    operator = request.user if request.user.is_authenticated else None
+    record = OperationRecord.objects.create(
+        entity_type=entity_type,
+        serial_number=serial_number,
+        operation_code=operation_code,
+        status=status_val,
+        result=result_val,
+        recorded_at=django_tz.now() if status_val == 'Completed' else None,
+        operator=operator,
+        notes=notes,
+        data=data,
+    )
+    return Response({
+        'id': record.id,
+        'entity_type': record.entity_type,
+        'serial_number': record.serial_number,
+        'operation_code': record.operation_code,
+        'status': record.status,
+        'result': record.result,
+    }, status=201)
+
+
+@api_view(['POST'])
+def api_motor_serial_assign(request, pk):
+    # Convenience endpoint wrapping operation record for motor serial assignment
+    try:
+        link = MotorAssembly.objects.get(pk=pk)
+    except MotorAssembly.DoesNotExist:
+        return Response({'detail': 'Motor assembly not found'}, status=404)
+    if not can_access_action(request.user, 'motor_serial_assign_write'):
+        return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+    final_serial = request.data.get('final_motor_serial', '')
+    if not isinstance(final_serial, str) or not final_serial.strip():
+        return Response({'detail': 'final_motor_serial is required'}, status=400)
+    final_serial = final_serial.strip().upper()
+    if link.final_motor_serial:
+        return Response({'detail': 'Motor serial already assigned'}, status=409)
+    if MotorAssembly.objects.filter(final_motor_serial__iexact=final_serial).exists():
+        return Response({'detail': 'Final motor serial already in use'}, status=409)
+    # Prereq: motor OP100 completed
+    if 'MOTOR_OP100' not in _completed_ops('motor', link.motor_serial):
+        return Response({'detail': 'Prerequisites not met', 'missing': ['MOTOR_OP100']}, status=400)
+    link.final_motor_serial = final_serial
+    link.motor_serial_assigned_at = django_tz.now()
+    link.save(update_fields=['final_motor_serial', 'motor_serial_assigned_at'])
+    OperationRecord.objects.create(
+        entity_type='motor',
+        serial_number=link.motor_serial,
+        operation_code='MOTOR_SERIAL_ASSIGN',
+        status='Completed',
+        result='Pass',
+        recorded_at=django_tz.now(),
+        operator=request.user if request.user.is_authenticated else None,
+        data={'final_motor_serial': final_serial},
+    )
+    return Response({'motor_serial': link.motor_serial, 'final_motor_serial': final_serial}, status=201)
+
+
+def _decode_modbus_string(registers):
+    """Decode a block of Modbus holding registers into an ASCII string.
+
+    Each register holds two ASCII bytes, first character in the low byte
+    (FX5U order). Null bytes and
+    surrounding whitespace are stripped.
+    """
+    if not registers:
+        return ''
+    b = b''
+    for reg in registers:
+        b += struct.pack('<H', int(reg))
+    return b.decode('ascii', errors='ignore').strip('\x00').strip()
+
+
+def _read_plc():
+    """Read the PLC and return a dict of readings, or None if unavailable.
+
+    Test seam: callers (and tests) can monkeypatch this to simulate PLC values.
+    """
     client = None
     try:
         if not settings.PLC_HOST:
-            raise RuntimeError('PLC_HOST is not configured')
+            return None
         client = ModbusTcpClient(
             settings.PLC_HOST,
             port=settings.PLC_PORT,
             timeout=settings.PLC_TIMEOUT,
         )
         if not client.connect():
-            return Response({'connected': False})
-
-        res_mag = client.read_holding_registers(address=3230, count=15, device_id=1)
-        magnet_serial = ""
-        if not res_mag.isError():
-            magnet_serial = _decode_modbus_string(res_mag.registers)
-
-        res_stack = client.read_holding_registers(address=3260, count=15, device_id=1)
-        stack_serial = ""
-        if not res_stack.isError():
-            stack_serial = _decode_modbus_string(res_stack.registers)
-
-        cycle_complete = bool(magnet_serial and stack_serial)
-
-        return Response({
-            'connected': True,
-            'magnet_serial': magnet_serial or None,
-            'stack_serial': stack_serial or None,
-            'cycle_complete': cycle_complete,
-            # Not yet read from PLC registers — omit so auto-save does not record fake PASS/0s.
-            'pass_fail': None,
-            'cycle_time': None,
-        })
-    except Exception:
-        logger.exception('PLC status poll failed')
-        return Response({
-            'connected': False,
-            'error': 'PLC unavailable',
-        }, status=503)
-    finally:
-        if client is not None:
             client.close()
+            client = None
+            return None
+
+        def rd(addr, count=1):
+            if addr is None:
+                return None
+            try:
+                r = client.read_holding_registers(address=addr, count=count, device_id=1)
+            except Exception:
+                return None
+            if r.isError():
+                return None
+            return list(r.registers)
+
+        mag_regs = rd(settings.PLC_REG_MAGNET_SERIAL, 9)
+        stack_regs = rd(settings.PLC_REG_STACK_SERIAL, 9)
+        state_regs = rd(settings.PLC_REG_RUN, 1)
+        ct_regs = rd(settings.PLC_REG_CYCLE_TIME, 1)
+
+        if not state_regs:
+            logger.warning('PLC state register could not be read')
+            client.close()
+            client = None
+            return None
+
+        def rd32(addr):
+            regs = rd(addr, 2)
+            if not regs or len(regs) < 2:
+                return None
+            # FX5U Modbus: 32-bit value stored low word first.
+            return int(regs[0]) + (int(regs[1]) << 16)
+
+        lhs_ok = rd32(settings.PLC_REG_LHS_OK_COUNTER)
+        lhs_ng = rd32(settings.PLC_REG_LHS_NG_COUNTER)
+
+        rhs_ok = None
+        rhs_ng = None
+        rhs_ct_raw = None
+        rhs_status = None
+        if getattr(settings, 'PLC_RHS_ENABLED', False):
+            rhs_ok = rd32(settings.PLC_REG_RHS_OK_COUNTER)
+            rhs_ng = rd32(settings.PLC_REG_RHS_NG_COUNTER)
+            rhs_ct_regs = rd(settings.PLC_REG_RHS_CYCLE_TIME, 1)
+            rhs_ct_raw = rhs_ct_regs[0] if rhs_ct_regs else None
+            rhs_status_regs = rd(settings.PLC_REG_RHS_STATUS, 1)
+            rhs_status = rhs_status_regs[0] if rhs_status_regs else None
+
+        client.close()
+        client = None
+        return {
+            'connected': True,
+            'magnet_serial': _decode_modbus_string(mag_regs) if mag_regs else '',
+            'stack_serial': _decode_modbus_string(stack_regs) if stack_regs else '',
+            'state': state_regs[0] if state_regs else None,
+            'cycle_time_raw': ct_regs[0] if ct_regs else None,
+            'lhs_ok_counter': lhs_ok,
+            'lhs_ng_counter': lhs_ng,
+            'rhs_ok_counter': rhs_ok,
+            'rhs_ng_counter': rhs_ng,
+            'rhs_cycle_time_raw': rhs_ct_raw,
+            'rhs_status': rhs_status,
+            'done': False,
+        }
+    except Exception:
+        logger.exception('PLC read failed')
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        return None
+
+
+def _poll_plc():
+    """Read the PLC once and feed the cycle state machine.
+
+    Returns a tuple (reading, result). ``reading`` is None when the PLC could
+    not be read (unavailable / error); ``result`` is the save decision payload.
+    """
+    with _PLC_POLL_LOCK:
+        reading = _read_plc()
+        if reading is None:
+            result = {'just_saved': False, 'saved_record': None, 'skip_reason': 'plc_unavailable'}
+            _log_plc_cycle_state({}, result)
+            return None, result
+        result = _process_plc_reading(reading)
+        return reading, result
+
+
+_last_cycle_log_monotonic = None
+
+
+def _log_plc_cycle_state(reading, result):
+    """DEBUG log of the PLC cycle snapshot; throttled to one line per second."""
+    global _last_cycle_log_monotonic
+    now = time.monotonic()
+    if _last_cycle_log_monotonic is not None and (now - _last_cycle_log_monotonic) < 1.0:
+        return
+    _last_cycle_log_monotonic = now
+    cache = _CYCLE_CACHE
+    reading = reading or {}
+    just_saved = bool(result.get('just_saved'))
+    skip_reason = result.get('skip_reason')
+    decision = 'saved' if just_saved else f'skipped:{skip_reason or "no_save"}'
+    logger.debug(
+        'PLC cycle state=%s lhs_ok=%s lhs_ng=%s mag=%s stack=%s running=%s decision=%s skip=%s',
+        reading.get('state'),
+        reading.get('lhs_ok_counter'),
+        reading.get('lhs_ng_counter'),
+        cache.get('magnet_serial') or '-',
+        cache.get('stack_serial') or '-',
+        cache.get('running'),
+        decision,
+        skip_reason or '-',
+    )
+
+
+_PLC_POLL_LOCK = threading.Lock()
+
+# Serials are dropped once the machine has been idle with empty scanner registers
+# for this long: a machine reset, or a cycle that ended without a counter increase.
+# The delay covers a counter that rises just after the state falls, and registers
+# that empty just before the state rises at cycle start.
+PLC_ABORT_GRACE_SECONDS = 5.0
+
+
+def _reading_counter(reading, *keys):
+    for key in keys:
+        if key in reading and reading.get(key) is not None:
+            try:
+                return int(reading.get(key))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _process_plc_reading(reading):
+    """Apply a PLC reading to the server-side cycle cache.
+
+    Returns a dict: {'just_saved': bool, 'saved_record': payload-or-None,
+                    'skip_reason': reason-when-skipped-or-None}.
+    Side effects update the module-global _CYCLE_CACHE. Survives page refreshes
+    (process memory); the deployment runs one web worker so this cache is shared
+    by the background poller and request handlers.
+    """
+    global _CYCLE_CACHE
+    if not reading or not reading.get('connected'):
+        return {'just_saved': False, 'saved_record': None, 'skip_reason': 'plc_unavailable'}
+
+    cache = _CYCLE_CACHE
+    now = django_tz.now()
+    mag = (reading.get('magnet_serial') or '').strip()
+    stk = (reading.get('stack_serial') or '').strip()
+    state = reading.get('state')
+    try:
+        running = state is not None and int(state) >= 2
+    except (TypeError, ValueError):
+        running = False
+    ct_raw = reading.get('cycle_time_raw')
+    rhs_ct_raw = reading.get('rhs_cycle_time_raw')
+    if rhs_ct_raw is None:
+        rhs_ct_raw = reading.get('rhs_cycle_time')
+    if rhs_ct_raw is None:
+        rhs_ct_raw = reading.get('cycle_time_raw')
+
+    # PLC clears these registers at cycle start; only explicit reset/save clears
+    # the cache, so empty reads never discard a scanned serial.
+    if mag:
+        cache['magnet_serial'] = mag
+    if stk:
+        cache['stack_serial'] = stk
+
+    prev_running = bool(cache.get('running'))
+
+    just_saved = False
+    saved_record = None
+    skip_reason = None
+
+    # Start edge: state goes from <2 to >=2.
+    if (not prev_running) and running:
+        cache['running'] = True
+        cache['cycle_saved'] = False
+        cache['abort_deadline'] = None
+        cache['start_time'] = now
+        cache['cycle_time'] = None
+        cache['cycle_time_raw'] = None
+        cache['end_time'] = None
+
+    # D60 can read 0 around the end of a cycle; keep the last real value.
+    if running and ct_raw:
+        cache['cycle_time_raw'] = ct_raw
+
+    # Counter-based save triggers.
+    lhs_ok = _reading_counter(reading, 'lhs_ok_counter', 'lhs_ok', 'ok_counter',
+                              'ok_count', 'lhs_ok_count', 'd500', 'counter_lhs_ok')
+    lhs_ng = _reading_counter(reading, 'lhs_ng_counter', 'lhs_ng', 'ng_counter',
+                              'ng_count', 'lhs_ng_count', 'd502', 'counter_lhs_ng')
+
+    def save_for_counter(status, pass_fail, delta, label, side_ct_raw):
+        nonlocal just_saved, saved_record, skip_reason
+        if not cache.get('magnet_serial') or not cache.get('stack_serial'):
+            skip_reason = 'missing_serials'
+            logger.info('Counter %s increased by %s but serials missing; skipping save', label, delta)
+            return
+        raw = side_ct_raw or ct_raw or cache.get('cycle_time_raw')
+        ct = float(raw) / 10.0 if raw else None
+        if ct is None:
+            skip_reason = 'missing_cycle_time'
+            logger.info('Counter %s increased by %s but cycle time missing; skipping save', label, delta)
+            return
+        parsed_start = cache.get('start_time') or now
+        try:
+            with transaction.atomic():
+                record = MagnetInsertion.objects.create(
+                    stack_serial=cache['stack_serial'],
+                    magnet_serial=cache['magnet_serial'],
+                    status=status,
+                    cycle_time=ct,
+                    pass_fail=pass_fail,
+                    operator=None,
+                    start_time=parsed_start,
+                    end_time=now,
+                )
+        except Exception:
+            logger.exception('Auto-save on counter increase failed')
+            skip_reason = 'save_failed'
+            return
+        cache['cycle_time'] = ct
+        cache['end_time'] = now
+        cache['cycle_saved'] = True
+        cache['save_notice'] = True
+        cache['save_notice_record'] = _record_payload(record)
+        just_saved = True
+        saved_record = _record_payload(record)
+        if delta > 1:
+            logger.info('missed %s cycles (jump of %s); missed %s cycles', delta - 1, delta, delta)
+        logger.info('Counter %s increased by %s; saved %s', label, delta, status)
+
+    # LHS OK
+    prev = cache.get('lhs_ok_prev')
+    if lhs_ok is not None:
+        if prev is None:
+            cache['lhs_ok_prev'] = lhs_ok
+        elif lhs_ok < prev:
+            logger.info('LHS OK counter decreased (reset) from %s to %s; re-baselining', prev, lhs_ok)
+            cache['lhs_ok_prev'] = lhs_ok
+            skip_reason = 'counter_reset'
+        elif lhs_ok > prev:
+            delta = lhs_ok - prev
+            cache['lhs_ok_prev'] = lhs_ok
+            save_for_counter(MagnetInsertion.STATUS_OK, True, delta, 'LHS OK', ct_raw)
+
+    # LHS NG
+    prev = cache.get('lhs_ng_prev')
+    if lhs_ng is not None:
+        if prev is None:
+            cache['lhs_ng_prev'] = lhs_ng
+        elif lhs_ng < prev:
+            logger.info('LHS NG counter decreased (reset) from %s to %s; re-baselining', prev, lhs_ng)
+            cache['lhs_ng_prev'] = lhs_ng
+            skip_reason = 'counter_reset'
+        elif lhs_ng > prev:
+            delta = lhs_ng - prev
+            cache['lhs_ng_prev'] = lhs_ng
+            save_for_counter(MagnetInsertion.STATUS_NOK, False, delta, 'LHS NG', ct_raw)
+
+    # RHS (behind setting)
+    if getattr(settings, 'PLC_RHS_ENABLED', False):
+        rhs_ok = _reading_counter(reading, 'rhs_ok_counter', 'rhs_ok', 'rhs_ok_count', 'd504')
+        rhs_ng = _reading_counter(reading, 'rhs_ng_counter', 'rhs_ng', 'rhs_ng_count', 'd506')
+        prev = cache.get('rhs_ok_prev')
+        if rhs_ok is not None:
+            if prev is None:
+                cache['rhs_ok_prev'] = rhs_ok
+            elif rhs_ok < prev:
+                logger.info('RHS OK counter decreased (reset) from %s to %s; re-baselining', prev, rhs_ok)
+                cache['rhs_ok_prev'] = rhs_ok
+                skip_reason = 'counter_reset'
+            elif rhs_ok > prev:
+                delta = rhs_ok - prev
+                cache['rhs_ok_prev'] = rhs_ok
+                save_for_counter(MagnetInsertion.STATUS_OK, True, delta, 'RHS OK', rhs_ct_raw)
+        prev = cache.get('rhs_ng_prev')
+        if rhs_ng is not None:
+            if prev is None:
+                cache['rhs_ng_prev'] = rhs_ng
+            elif rhs_ng < prev:
+                logger.info('RHS NG counter decreased (reset) from %s to %s; re-baselining', prev, rhs_ng)
+                cache['rhs_ng_prev'] = rhs_ng
+                skip_reason = 'counter_reset'
+            elif rhs_ng > prev:
+                delta = rhs_ng - prev
+                cache['rhs_ng_prev'] = rhs_ng
+                save_for_counter(MagnetInsertion.STATUS_NOK, False, delta, 'RHS NG', rhs_ct_raw)
+
+    if skip_reason is None and not just_saved:
+        skip_reason = 'no_counter_change'
+
+    _log_plc_cycle_state(reading, {'just_saved': just_saved, 'skip_reason': skip_reason})
+
+    # Clear cached cycle data (not counters) once idle and the cycle is saved, or
+    # once the scanner registers have stayed empty for the grace period.
+    if mag or stk or running:
+        cache['abort_deadline'] = None
+    elif cache.get('abort_deadline') is None and not cache.get('cycle_saved') and (
+            prev_running or cache.get('magnet_serial') or cache.get('stack_serial')):
+        cache['abort_deadline'] = time.monotonic() + PLC_ABORT_GRACE_SECONDS
+    abort_deadline = cache.get('abort_deadline')
+    aborted = abort_deadline is not None and time.monotonic() >= abort_deadline
+    if aborted and (cache.get('magnet_serial') or cache.get('stack_serial')):
+        logger.info(
+            'Cleared unsaved serials stack=%s magnet=%s: idle with empty PLC registers',
+            cache.get('stack_serial'), cache.get('magnet_serial'),
+        )
+    if (not running) and (cache.get('cycle_saved') or aborted):
+        cache['magnet_serial'] = None
+        cache['stack_serial'] = None
+        cache['start_time'] = None
+        cache['cycle_time'] = None
+        cache['cycle_time_raw'] = None
+        cache['end_time'] = None
+        cache['cycle_saved'] = False
+        cache['abort_deadline'] = None
+    if not running:
+        cache['running'] = False
+
+    return {'just_saved': just_saved, 'saved_record': saved_record, 'skip_reason': skip_reason}
+
+
+@api_view(['GET'])
+@api_access_required('magnet_read')
+def api_magnet_insertion_status(request):
+    """Poll the PLC and drive the server-side magnet insertion cycle state machine.
+
+    Serials are cached server-side the moment they are scanned and are NOT
+    overwritten by the empty reads that occur when the cycle starts. An OK/NG
+    counter increase triggers an automatic DB save.
+    """
+    with _PLC_POLL_LOCK:
+        reading = _read_plc()
+        if reading is None:
+            result = {'just_saved': False, 'saved_record': None, 'skip_reason': 'plc_unavailable'}
+            _log_plc_cycle_state({}, result)
+            return Response({'connected': False, 'error': 'PLC unavailable'}, status=503)
+        result = _process_plc_reading(reading)
+    cache = _CYCLE_CACHE
+    state = reading.get('state')
+    save_notice = cache.pop('save_notice', False)
+    save_notice_record = cache.pop('save_notice_record', None)
+    just_saved = result['just_saved'] or save_notice
+    saved_record = result['saved_record'] or save_notice_record
+    running = bool(cache.get('running'))
+    ct_raw = reading.get('cycle_time_raw')
+    if cache.get('cycle_time') is not None:
+        cycle_time = cache.get('cycle_time')
+    elif ct_raw is not None:
+        cycle_time = float(ct_raw) / 10.0
+    else:
+        cycle_time = None
+    return Response({
+        'connected': True,
+        'magnet_serial': cache.get('magnet_serial'),
+        'stack_serial': cache.get('stack_serial'),
+        'state': state,
+        'run': running,
+        'done': False,
+        'save_trigger': bool(just_saved),
+        'reset': False,
+        'pass_fail': None,
+        'cycle_time': cycle_time,
+        'saved': False,
+        'just_saved': just_saved,
+        'saved_record': saved_record,
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAGNET INSERTION CYCLE MANAGEMENT (in-memory cache + DB persistence on save)
+
+# In-memory cache of the current (unsaved) cycle. Nothing is written to the DB
+# until a PLC OK/NG counter increases or the save endpoint is called.
+# Single-worker deployment assumption; for multi-worker, back this with Redis.
+_CYCLE_CACHE = {
+    'stack_serial': None,
+    'magnet_serial': None,
+    'start_time': None,        # moment state went 1 -> >=2
+    'pass_fail': None,
+    'cycle_time': None,        # saved cycle time (seconds)
+    'cycle_time_raw': None,    # last raw reading (tenths)
+    'end_time': None,
+    'saved': False,            # manual save guard
+    'saved_stack': None,
+    'saved_magnet': None,
+    'running': False,          # state >= 2
+    'cycle_saved': False,      # counter save already happened for this cycle
+    'abort_deadline': None,    # monotonic time an unsaved idle cycle is dropped
+    'save_notice': False,
+    'save_notice_record': None,
+    'lhs_ok_prev': None,
+    'lhs_ng_prev': None,
+    'rhs_ok_prev': None,
+    'rhs_ng_prev': None,
+}
+
+
+def _clear_cycle_cache():
+    _CYCLE_CACHE.update({
+        'stack_serial': None,
+        'magnet_serial': None,
+        'start_time': None,
+        'pass_fail': None,
+        'cycle_time': None,
+        'cycle_time_raw': None,
+        'end_time': None,
+        'saved': False,
+        'saved_stack': None,
+        'saved_magnet': None,
+        'running': False,
+        'cycle_saved': False,
+        'abort_deadline': None,
+        'save_notice': False,
+        'save_notice_record': None,
+    })
+
+
+def _record_payload(record):
+    return {
+        'id': record.id,
+        'stack_serial': record.stack_serial,
+        'magnet_serial': record.magnet_serial,
+        'status': record.status,
+        'cycle_time': record.cycle_time,
+        'pass_fail': record.pass_fail,
+        'result': 'OK' if record.status == MagnetInsertion.STATUS_OK else 'NOK',
+        'operator': record.operator.get_full_name() if record.operator else '',
+        'start_time': record.start_time.astimezone(IST).isoformat() if record.start_time else '',
+        'end_time': record.end_time.astimezone(IST).isoformat() if record.end_time else '',
+        'timestamp': record.timestamp.astimezone(IST).isoformat() if record.timestamp else '',
+    }
+
+
+@api_view(['POST'])
+@api_access_required('magnet_write')
+@transaction.atomic
+def api_magnet_insertion_cycle_save(request):
+    """Save the current in-memory cycle as ONE new DB row.
+
+    Guarded against double saves: once `saved` is set for the same stack +
+    magnet pair, subsequent save calls return the existing row instead of
+    creating a duplicate. Each cycle is a new row identified by (stack_serial,
+    start_time); old rows are never overwritten.
+    """
+    try:
+        stack_serial = _request_text(request.data, 'stack_serial', max_length=64, upper=True)
+        magnet_serial = _request_text(request.data, 'magnet_serial', max_length=64, upper=True)
+        pass_fail = request.data.get('pass_fail')
+        cycle_time = request.data.get('cycle_time')
+        start_time = request.data.get('start_time')
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    if not stack_serial:
+        return Response({'detail': 'Stack serial is required'}, status=400)
+    if not magnet_serial:
+        return Response({'detail': 'Magnet serial is required'}, status=400)
+    if not isinstance(pass_fail, bool):
+        return Response({'detail': 'pass_fail must be a JSON boolean'}, status=400)
+
+    # Guard: only one save per cycle (rising edge). If already saved for this
+    # pair, return the existing (latest) row instead of creating a duplicate.
+    if _CYCLE_CACHE['saved'] and \
+            _CYCLE_CACHE.get('saved_stack') == stack_serial and \
+            _CYCLE_CACHE.get('saved_magnet') == magnet_serial:
+        existing = (
+            MagnetInsertion.objects
+            .filter(stack_serial__iexact=stack_serial)
+            .order_by('-start_time', '-timestamp')
+            .first()
+        )
+        return Response(
+            _record_payload(existing) if existing else {'detail': 'Cycle already saved'},
+            status=200,
+        )
+
+    operator = request.user if request.user.is_authenticated else None
+    now = django_tz.now()
+    parsed_start = now
+    if start_time:
+        try:
+            parsed_start = django_tz.datetime.fromisoformat(str(start_time))
+            if django_tz.is_naive(parsed_start):
+                parsed_start = django_tz.make_aware(parsed_start)
+        except (ValueError, TypeError):
+            parsed_start = now
+
+    # Validate cycle_time if provided.
+    ct = None
+    if cycle_time is not None:
+        try:
+            ct = float(cycle_time)
+        except (ValueError, TypeError):
+            ct = None
+        if ct is not None and not (0 < ct <= 3600):
+            return Response(
+                {'detail': 'Cycle time must be greater than 0 and no more than 3600 seconds'},
+                status=400,
+            )
+
+    with transaction.atomic():
+        record = MagnetInsertion.objects.create(
+            stack_serial=stack_serial,
+            magnet_serial=magnet_serial,
+            status=MagnetInsertion.STATUS_OK if pass_fail else MagnetInsertion.STATUS_NOK,
+            cycle_time=ct,
+            pass_fail=pass_fail,
+            operator=operator,
+            start_time=parsed_start,
+            end_time=now,
+        )
+
+    _CYCLE_CACHE.update({
+        'stack_serial': None,
+        'magnet_serial': None,
+        'start_time': None,
+        'pass_fail': pass_fail,
+        'cycle_time': ct,
+        'cycle_time_raw': None,
+        'end_time': now,
+        'saved': True,
+        'saved_stack': stack_serial,
+        'saved_magnet': magnet_serial,
+        'running': False,
+        'cycle_saved': False,
+        'abort_deadline': None,
+    })
+
+    logger.info(
+        'Magnet insertion cycle saved: stack=%s magnet=%s status=%s start_time=%s',
+        stack_serial, magnet_serial, record.status, record.start_time,
+    )
+    return Response(_record_payload(record), status=201)
+
+
+@api_view(['POST'])
+@api_access_required('magnet_write')
+@transaction.atomic
+def api_magnet_insertion_reset(request):
+    """On RESET: discard the in-memory cycle without writing to the DB.
+
+    No row is created and no existing row is touched. Logs "cycle discarded"
+    when there was an unsaved cycle in progress.
+    """
+    stack_serial = request.data.get('stack_serial', '')
+    magnet_serial = request.data.get('magnet_serial', '')
+
+    had_unsaved = bool(_CYCLE_CACHE['stack_serial'] or _CYCLE_CACHE['magnet_serial'])
+    _clear_cycle_cache()
+
+    if had_unsaved:
+        logger.warning(
+            'Magnet insertion cycle discarded on reset: stack=%s magnet=%s '
+            '(no DB row written)',
+            stack_serial, magnet_serial,
+        )
+
+    return Response({'discarded': had_unsaved})
+
+
+
+# FINAL INSPECTION API
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _active_parameters():
+    return list(FinalInspectionParameter.objects.filter(active=True).order_by('sort_order', 'id'))
+
+
+def _serialize_parameter(parameter):
+    return {
+        'code': parameter.code,
+        'name': parameter.name,
+        'section': parameter.section,
+        'unit': parameter.unit,
+        'spec_min': parameter.spec_min,
+        'spec_max': parameter.spec_max,
+        'spec_text': parameter.spec_text,
+        'input_type': parameter.input_type,
+        'is_calculated': parameter.is_calculated,
+        'sort_order': parameter.sort_order,
+    }
+
+
+def _to_float(raw):
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fmt_number(value):
+    text = f'{value:.6f}'.rstrip('0').rstrip('.')
+    return text or '0'
+
+
+def _calculated_updates(values):
+    updates = {}
+    if 'ENC_ANGLE_RAD' in values:
+        radians = _to_float(values.get('ENC_ANGLE_RAD'))
+        if radians is None:
+            updates['ENC_ANGLE_DEG'] = ''
+            updates['ENC_ANGLE_VALUE'] = ''
+        else:
+            degrees = math.degrees(radians) % 360
+            updates['ENC_ANGLE_DEG'] = _fmt_number(degrees)
+            updates['ENC_ANGLE_VALUE'] = str(int(round(degrees * 10)))
+    if 'THERMISTOR1' in values or 'THERMISTOR2' in values:
+        t1 = _to_float(values.get('THERMISTOR1'))
+        t2 = _to_float(values.get('THERMISTOR2'))
+        if t1 in (None, 0) or t2 is None:
+            updates['THERMISTOR_MISMATCH'] = ''
+        else:
+            updates['THERMISTOR_MISMATCH'] = _fmt_number((t2 - t1) / t1 * 100)
+    return updates
+
+
+def _reading_payload(reading):
+    parameter = reading.parameter
+    return {
+        'parameter': parameter.code,
+        'code': parameter.code,
+        'section': parameter.section,
+        'name': parameter.name,
+        'unit': parameter.unit,
+        'spec_min': parameter.spec_min,
+        'spec_max': parameter.spec_max,
+        'spec_text': parameter.spec_text,
+        'input_type': parameter.input_type,
+        'is_calculated': parameter.is_calculated,
+        'sort_order': parameter.sort_order,
+        'value': reading.value,
+        'result': reading.result,
+    }
+
+
+def _readings_payload(inspection):
+    readings = {}
+    if inspection is not None and inspection.pk:
+        readings = {r.parameter.code: r for r in inspection.readings.select_related('parameter').all()}
+    payload = []
+    for parameter in _active_parameters():
+        reading = readings.get(parameter.code)
+        if reading:
+            payload.append(_reading_payload(reading))
+        else:
+            payload.append({
+                'parameter': parameter.code,
+                'code': parameter.code,
+                'section': parameter.section,
+                'name': parameter.name,
+                'unit': parameter.unit,
+                'spec_min': parameter.spec_min,
+                'spec_max': parameter.spec_max,
+                'spec_text': parameter.spec_text,
+                'input_type': parameter.input_type,
+                'is_calculated': parameter.is_calculated,
+                'sort_order': parameter.sort_order,
+                'value': '',
+                'result': 'NA',
+            })
+    return payload
+
+
+def _incomplete_missing(inspection):
+    """Names of active parameters that are unfilled or still NA."""
+    readings = {
+        r.parameter.code: r
+        for r in inspection.readings.select_related('parameter').all()
+    }
+    missing = []
+    for parameter in _active_parameters():
+        reading = readings.get(parameter.code)
+        if reading is None or not str(reading.value or '').strip() or reading.result == 'NA':
+            missing.append(parameter.name)
+    return missing
+
+
+def _compute_overall(inspection):
+    any_fail = inspection.readings.filter(result='Fail').exists()
+    if any_fail:
+        return 'Fail'
+    if inspection.readings.filter(result='Pass').exists():
+        return 'Pass'
+    return 'NA'
+
+
+def _upsert_readings(inspection, readings_data):
+    incoming = {}
+    for entry in readings_data or []:
+        code = str(entry.get('parameter') or entry.get('code') or '').strip().upper()
+        if not code:
+            continue
+        raw = entry.get('value')
+        incoming[code] = '' if raw is None else str(raw).strip()
+
+    incoming = {code: value for code, value in incoming.items() if code not in CALCULATED_CODES}
+    parameters = {p.code: p for p in _active_parameters()}
+    unknown = sorted(set(incoming) - set(parameters))
+    if unknown:
+        raise ValueError(f'Unknown parameter code(s): {", ".join(unknown)}')
+
+    current = {r.parameter.code: r.value for r in inspection.readings.select_related('parameter').all()}
+    current.update(incoming)
+    calculated = _calculated_updates(current)
+
+    targets = {**incoming, **calculated}
+    for code, value in targets.items():
+        parameter = parameters.get(code)
+        if parameter is None:
+            continue
+        FinalInspectionReading.objects.update_or_create(
+            final_inspection=inspection,
+            parameter=parameter,
+            defaults={'value': value, 'result': _spec_check(parameter, value)},
+        )
+
+    inspection.overall_result = _compute_overall(inspection)
+    inspection.save(update_fields=['overall_result'])
+    return inspection
+
+
+def _filter_inspections(request):
+    qs = FinalInspection.objects.all().annotate(
+        rotor_result=models.Subquery(
+            RotorBalancing.objects
+            .filter(serial_number__iexact=models.OuterRef('motor_serial'))
+            .order_by('-attempt_no', '-recorded_at', '-imported_at')
+            .values('result')[:1],
+            output_field=models.CharField(),
+        ),
+        stator_result=models.Subquery(
+            StatorTestingRecord.objects
+            .filter(serial_number__iexact=models.OuterRef('motor_serial'))
+            .order_by('-imported_at').values('final_result')[:1],
+            output_field=models.CharField(),
+        ),
+    ).select_related('inspector')
+
+    params = request.query_params
+    search = params.get('search', '').strip()
+    if search:
+        qs = qs.filter(
+            models.Q(motor_serial__icontains=search)
+            | models.Q(enc_no__icontains=search)
+            | models.Q(stator_serial__icontains=search)
+            | models.Q(rotor_serial__icontains=search)
+        )
+    motor = params.get('motor_serial', '').strip()
+    enc = params.get('enc_no', '').strip()
+    stator = params.get('stator_serial', '').strip()
+    rotor = params.get('rotor_serial', '').strip()
+    inspector = params.get('inspector', '').strip()
+    status = params.get('status', '').strip()
+    overall = params.get('overall', '').strip() or params.get('result', '').strip()
+    if motor:
+        qs = qs.filter(motor_serial__icontains=motor)
+    if enc:
+        qs = qs.filter(enc_no__icontains=enc)
+    if stator:
+        qs = qs.filter(stator_serial__icontains=stator)
+    if rotor:
+        qs = qs.filter(rotor_serial__icontains=rotor)
+    if inspector:
+        qs = qs.filter(
+            models.Q(inspector__username__icontains=inspector)
+            | models.Q(inspector__first_name__icontains=inspector)
+            | models.Q(inspector__last_name__icontains=inspector)
+        )
+    if status:
+        qs = qs.filter(status=status)
+    if overall:
+        qs = qs.filter(overall_result=overall)
+
+    start = params.get('start_date', '')
+    end = params.get('end_date', '')
+    if start:
+        try:
+            qs = qs.filter(inspected_at__date__gte=date.fromisoformat(start))
+        except ValueError:
+            pass
+    if end:
+        try:
+            qs = qs.filter(inspected_at__date__lte=date.fromisoformat(end))
+        except ValueError:
+            pass
+
+    sort_map = {
+        'inspected_at': 'inspected_at',
+        'motor_serial': 'motor_serial',
+        'enc_no': 'enc_no',
+        'stator_serial': 'stator_serial',
+        'rotor_serial': 'rotor_serial',
+        'attempt_no': 'attempt_no',
+        'status': 'status',
+        'overall_result': 'overall_result',
+        'inspector': 'inspector__username',
+    }
+    sort = sort_map.get(params.get('sort', 'inspected_at'), 'inspected_at')
+    if params.get('order', 'desc').lower() == 'asc':
+        qs = qs.order_by(sort, 'id')
+    else:
+        qs = qs.order_by(f'-{sort}', '-id')
+    return qs
+
+
+def _inspection_list_payload(inspection):
+    return {
+        'id': inspection.id,
+        'motor_serial': inspection.motor_serial,
+        'assembly_temp_id': inspection.assembly_temp_id or '',
+        'enc_no': inspection.enc_no,
+        'stator_serial': inspection.stator_serial,
+        'rotor_serial': inspection.rotor_serial,
+        'magnet_type': inspection.magnet_type or '',
+        'pcb_board': inspection.pcb_board or '',
+        'inspector': inspection.inspector.get_full_name() if inspection.inspector else '',
+        'inspected_at': inspection.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+        'attempt_no': inspection.attempt_no,
+        'status': inspection.status,
+        'overall_result': inspection.overall_result,
+        'remarks': inspection.remarks or '',
+        'completed_at': inspection.completed_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.completed_at else '',
+        'rotor_result': inspection.rotor_result if inspection.rotor_result else ('—' if inspection.rotor_result is None else str(inspection.rotor_result)),
+        'stator_result': inspection.stator_result if inspection.stator_result else ('—' if inspection.stator_result is None else str(inspection.stator_result)),
+    }
+
+
+@api_view(['GET', 'POST'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_list(request):
+    if request.method == 'POST':
+        if not can_access_action(request.user, 'final_inspection_write'):
+            return Response({'detail': 'You do not have permission to perform this action.'}, status=403)
+        try:
+            motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+        if not motor_serial:
+            return Response({'detail': 'Motor Sr No is required'}, status=400)
+
+        attempt_no = None
+        raw_attempt = request.data.get('attempt_no')
+        if raw_attempt not in (None, ''):
+            try:
+                attempt_no = int(raw_attempt)
+            except (TypeError, ValueError):
+                return Response({'detail': 'Attempt No must be a number'}, status=400)
+            if attempt_no < 1:
+                return Response({'detail': 'Attempt No must be at least 1'}, status=400)
+
+        actor = request.user if request.user.is_authenticated else None
+        readings_data = request.data.get('readings', [])
+        if not isinstance(readings_data, list):
+            return Response({'detail': 'readings must be a list'}, status=400)
+
+        try:
+            with transaction.atomic():
+                instance = None
+                if attempt_no is not None:
+                    instance = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial, attempt_no=attempt_no,
+                    ).first()
+                else:
+                    instance = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial, status='Draft',
+                    ).order_by('-attempt_no').first()
+                    if instance is None:
+                        maximum = FinalInspection.objects.filter(
+                            motor_serial__iexact=motor_serial,
+                        ).aggregate(m=models.Max('attempt_no'))['m'] or 0
+                        attempt_no = maximum + 1
+
+                if instance is None:
+                    instance = FinalInspection.objects.create(
+                        motor_serial=motor_serial,
+                        attempt_no=attempt_no or 1,
+                        inspector=actor,
+                    )
+                elif instance.status != 'Draft':
+                    return Response({'detail': 'Final inspection already completed'}, status=409)
+
+                _apply_header_fields(instance, request.data)
+                instance.save()
+                _upsert_readings(instance, readings_data)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        data = _inspection_detail_payload(instance)
+        return Response(data, status=201)
+
+    qs = _filter_inspections(request)
+    items, meta = paginate_queryset(qs, request, default_page_size=50, max_page_size=200)
+    return Response({'results': [_inspection_list_payload(i) for i in items], **meta})
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_parameters(request):
+    return Response({'parameters': [_serialize_parameter(p) for p in _active_parameters()]})
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_assembly_lookup(request, serial):
+    serial = str(serial).strip()
+    link = MotorAssembly.objects.filter(
+        models.Q(motor_serial__iexact=serial) | models.Q(final_motor_serial__iexact=serial)
+    ).first()
+    if link is None:
+        return Response({'detail': 'Motor assembly not found', 'code': 'not_found'}, status=404)
+    return Response({
+        'assembly_temp_id': link.motor_serial,
+        'motor_serial': link.final_motor_serial or link.motor_serial,
+        'stator_serial': link.stator_serial,
+        'rotor_serial': link.rotor_serial,
+    })
+
+
+def _inspection_detail_payload(inspection):
+    return {
+        'id': inspection.id,
+        'motor_serial': inspection.motor_serial,
+        'assembly_temp_id': inspection.assembly_temp_id or '',
+        'enc_no': inspection.enc_no,
+        'stator_serial': inspection.stator_serial,
+        'rotor_serial': inspection.rotor_serial,
+        'magnet_type': inspection.magnet_type or '',
+        'pcb_board': inspection.pcb_board or '',
+        'inspector': inspection.inspector.get_full_name() if inspection.inspector else '',
+        'inspected_at': inspection.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+        'attempt_no': inspection.attempt_no,
+        'status': inspection.status,
+        'overall_result': inspection.overall_result,
+        'remarks': inspection.remarks or '',
+        'completed_at': inspection.completed_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.completed_at else '',
+        'readings': _readings_payload(inspection),
+        'missing': _incomplete_missing(inspection),
+        'operation_completed': OP_FINAL_INSPECTION in set(
+            OperationRecord.objects.filter(
+                entity_type='motor', serial_number__iexact=inspection.motor_serial,
+                status='Completed',
+            ).values_list('operation_code', flat=True)
+        ),
+    }
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_by_serial(request, serial):
+    serial = str(serial).strip()
+    qs = FinalInspection.objects.filter(motor_serial__iexact=serial)
+    attempt = request.query_params.get('attempt_no', '').strip()
+    if attempt:
+        try:
+            qs = qs.filter(attempt_no=int(attempt))
+        except ValueError:
+            pass
+    inspection = qs.order_by('-attempt_no', '-inspected_at').first()
+    if not inspection:
+        return Response({
+            'found': False,
+            'motor_serial': serial.upper(),
+            'readings': _readings_payload(FinalInspection(motor_serial=serial)),
+            'missing': [p.name for p in _active_parameters()],
+        })
+    data = _inspection_detail_payload(inspection)
+    data['found'] = True
+    return Response(data)
+
+
+def _apply_header_fields(instance, data):
+    text_fields = (
+        ('assembly_temp_id', 32, True),
+        ('enc_no', 32, True),
+        ('stator_serial', 32, True),
+        ('rotor_serial', 32, True),
+        ('magnet_type', 64, False),
+        ('pcb_board', 64, False),
+        ('remarks', 255, False),
+    )
+    for field, max_length, upper in text_fields:
+        if field in data:
+            setattr(instance, field, _request_text(
+                data, field, label=field.replace('_', ' ').title(),
+                max_length=max_length, upper=upper,
+            ))
+    return instance
+
+
+@api_view(['POST'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_create(request):
+    try:
+        motor_serial = _request_text(request.data, 'motor_serial', label='Motor Sr No', max_length=32, upper=True)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+    if not motor_serial:
+        return Response({'detail': 'Motor Sr No is required'}, status=400)
+
+    attempt_no = None
+    raw_attempt = request.data.get('attempt_no')
+    if raw_attempt not in (None, ''):
+        try:
+            attempt_no = int(raw_attempt)
+        except (TypeError, ValueError):
+            return Response({'detail': 'Attempt No must be a number'}, status=400)
+        if attempt_no < 1:
+            return Response({'detail': 'Attempt No must be at least 1'}, status=400)
+
+    actor = request.user if request.user.is_authenticated else None
+    readings_data = request.data.get('readings', [])
+    if not isinstance(readings_data, list):
+        return Response({'detail': 'readings must be a list'}, status=400)
+
+    try:
+        with transaction.atomic():
+            instance = None
+            if attempt_no is not None:
+                instance = FinalInspection.objects.filter(
+                    motor_serial__iexact=motor_serial, attempt_no=attempt_no,
+                ).first()
+            else:
+                instance = FinalInspection.objects.filter(
+                    motor_serial__iexact=motor_serial, status='Draft',
+                ).order_by('-attempt_no').first()
+                if instance is None:
+                    maximum = FinalInspection.objects.filter(
+                        motor_serial__iexact=motor_serial,
+                    ).aggregate(m=models.Max('attempt_no'))['m'] or 0
+                    attempt_no = maximum + 1
+
+            if instance is None:
+                instance = FinalInspection.objects.create(
+                    motor_serial=motor_serial,
+                    attempt_no=attempt_no or 1,
+                    inspector=actor,
+                )
+            elif instance.status != 'Draft':
+                return Response({'detail': 'Final inspection already completed'}, status=409)
+
+            _apply_header_fields(instance, request.data)
+            instance.save()
+            _upsert_readings(instance, readings_data)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    data = _inspection_detail_payload(instance)
+    return Response(data, status=201)
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_detail(request, pk):
+    try:
+        instance = FinalInspection.objects.select_related('inspector').get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+    data = _inspection_detail_payload(instance)
+    data['found'] = True
+    return Response(data)
+
+
+@api_view(['PUT', 'PATCH'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_update(request, pk):
+    try:
+        instance = FinalInspection.objects.get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+    if instance.status != 'Draft':
+        return Response({'detail': 'Only Draft inspections may be edited.'}, status=409)
+
+    readings_data = request.data.get('readings', [])
+    if not isinstance(readings_data, list):
+        return Response({'detail': 'readings must be a list'}, status=400)
+
+    try:
+        with transaction.atomic():
+            _apply_header_fields(instance, request.data)
+            instance.save()
+            _upsert_readings(instance, readings_data)
+    except ValueError as exc:
+        return Response({'detail': str(exc)}, status=400)
+
+    data = _inspection_detail_payload(instance)
+    return Response(data)
+
+
+@api_view(['POST'])
+@api_access_required('final_inspection_write')
+def api_final_inspection_complete(request, pk):
+    """Complete a Draft inspection and fire FINAL_INSPECTION operation gate."""
+    with transaction.atomic():
+        try:
+            instance = FinalInspection.objects.select_for_update().get(pk=pk)
+        except FinalInspection.DoesNotExist:
+            return Response({'detail': 'Final inspection not found'}, status=404)
+        if instance.status == 'Completed':
+            return Response({'detail': 'Final inspection already completed'}, status=409)
+
+        if 'remarks' in request.data:
+            try:
+                instance.remarks = _request_text(
+                    request.data, 'remarks', label='Remarks', max_length=255, upper=False,
+                )
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=400)
+
+        missing = _incomplete_missing(instance)
+        if missing:
+            return Response({'detail': 'Required readings are missing', 'missing': missing[:10]}, status=400)
+
+        overall = _compute_overall(instance)
+        if overall == 'Fail' and not (instance.remarks or '').strip():
+            return Response({'detail': 'Remarks are required when the overall result is Fail'}, status=400)
+        if overall == 'NA':
+            return Response({'detail': 'Required readings are missing', 'missing': _incomplete_missing(instance)[:10]}, status=400)
+
+        now = django_tz.now()
+        instance.status = 'Completed'
+        instance.overall_result = overall
+        instance.completed_at = now
+        instance.save(update_fields=['status', 'overall_result', 'completed_at', 'remarks'])
+        actor = request.user if request.user.is_authenticated else None
+
+        gate = OperationRecord.objects.filter(
+            entity_type='motor',
+            serial_number__iexact=instance.motor_serial,
+            operation_code=OP_FINAL_INSPECTION,
+        ).order_by('-created_at').first()
+        gate_values = {
+            'status': 'Completed',
+            'result': overall,
+            'recorded_at': now,
+            'operator': actor,
+            'notes': instance.remarks or '',
+            'data': {
+                'overall_result': overall,
+                'attempt_no': instance.attempt_no,
+                'motor_serial': instance.motor_serial,
+            },
+        }
+        if gate is None:
+            OperationRecord.objects.create(
+                entity_type='motor',
+                serial_number=instance.motor_serial,
+                operation_code=OP_FINAL_INSPECTION,
+                **gate_values,
+            )
+        else:
+            for key, value in gate_values.items():
+                setattr(gate, key, value)
+            gate.save()
+
+    return Response({
+        'id': instance.id,
+        'status': instance.status,
+        'overall_result': instance.overall_result,
+    }, status=201)
+
+
+def _spec_check(parameter, raw_value):
+    """Server-side spec validation — trusted source of truth.
+
+    Empty values are NA.  Values with no configured limits pass.  Any value
+    outside the configured min/max fails; non-numeric input for a parameter
+    with limits fails.
+    """
+    raw = '' if raw_value is None else str(raw_value).strip()
+    if not raw:
+        return 'NA'
+    lower, upper = parameter.spec_min, parameter.spec_max
+    if lower is None and upper is None:
+        return 'Pass'
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 'Fail'
+    if value < 0 and lower is None:
+        return 'Fail'
+    if lower is not None and upper is not None:
+        return 'Pass' if lower <= value <= upper else 'Fail'
+    if lower is not None:
+        return 'Pass' if value >= lower else 'Fail'
+    return 'Pass' if value <= upper else 'Fail'
+
+
+def _export_columns():
+    parameters = _active_parameters()
+    headers = [
+        'S.No', 'Motor Sr No', 'Enc No', 'Stator', 'Rotor', 'Magnet Type',
+        'PCB Board', 'Inspector', 'Inspected At', 'Attempt No', 'Status',
+        'Overall Result',
+    ]
+    for parameter in parameters:
+        unit = f' ({parameter.unit})' if parameter.unit else ''
+        headers.append(f'{parameter.section} - {parameter.name}{unit}')
+    headers.append('Remarks')
+    return parameters, headers
+
+
+def _inspection_export_row(index, inspection, parameters, readings):
+    row = [
+        index,
+        inspection.motor_serial,
+        inspection.enc_no or '',
+        inspection.stator_serial or '',
+        inspection.rotor_serial or '',
+        inspection.magnet_type or '',
+        inspection.pcb_board or '',
+        inspection.inspector.get_full_name() if inspection.inspector else '',
+        inspection.inspected_at.astimezone(IST).strftime('%Y-%m-%d %H:%M:%S') if inspection.inspected_at else '',
+        inspection.attempt_no,
+        inspection.status,
+        inspection.overall_result,
+    ]
+    for parameter in parameters:
+        reading = readings.get(parameter.code)
+        row.append(reading.value if reading else '')
+    row.append(inspection.remarks or '')
+    return row
+
+
+def _build_xlsx(inspections):
+    buffer = BytesIO()
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = 'Final Inspection'
+
+    parameters, headers = _export_columns()
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+    for index, inspection in enumerate(inspections, start=1):
+        readings = {
+            r.parameter.code: r
+            for r in inspection.readings.select_related('parameter').all()
+        }
+        sheet.append(_inspection_export_row(index, inspection, parameters, readings))
+    sheet.freeze_panes = 'A2'
+    sheet.auto_filter.ref = sheet.dimensions
+    sheet.column_dimensions['A'].width = 6
+    sheet.column_dimensions['B'].width = 20
+    for column in range(3, len(headers) + 1):
+        sheet.column_dimensions[get_column_letter(column)].width = 16
+    sheet.column_dimensions[get_column_letter(len(headers))].width = 32
+
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _export_csv(inspections):
+    import csv as csv_mod
+    parameters, headers = _export_columns()
+    buffer = BytesIO()
+    text = []
+    writer = csv_mod.writer(text)
+    writer.writerow(headers)
+    for index, inspection in enumerate(inspections, start=1):
+        readings = {
+            r.parameter.code: r
+            for r in inspection.readings.select_related('parameter').all()
+        }
+        writer.writerow(_inspection_export_row(index, inspection, parameters, readings))
+    buffer.write('\n'.join(text).encode('utf-8'))
+    return buffer.getvalue()
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_export(request, pk):
+    try:
+        inspection = FinalInspection.objects.select_related('inspector').get(pk=pk)
+    except FinalInspection.DoesNotExist:
+        return Response({'detail': 'Final inspection not found'}, status=404)
+
+    fmt = request.query_params.get('format', 'xlsx').lower()
+    if fmt == 'csv':
+        buf = _export_csv([inspection])
+        return HttpResponse(buf, content_type='text/csv; charset=utf-8', headers={
+            'Content-Disposition': f'attachment; filename="final_inspection_{inspection.motor_serial}.csv"',
+        })
+    buf = _build_xlsx([inspection])
+    filename = f"final_inspection_{inspection.motor_serial}_{inspection.attempt_no}.xlsx"
+    return HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
+@api_view(['GET'])
+@api_access_required('final_inspection_read')
+def api_final_inspection_export_list(request):
+    inspections = list(_filter_inspections(request).select_related('inspector')[:5000])
+    fmt = request.query_params.get('format', 'xlsx').lower()
+    if fmt == 'csv':
+        buf = _export_csv(inspections)
+        return HttpResponse(buf, content_type='text/csv; charset=utf-8', headers={
+            'Content-Disposition': 'attachment; filename="final_inspection_records.csv"',
+        })
+    buf = _build_xlsx(inspections)
+    return HttpResponse(buf.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': 'attachment; filename="final_inspection_records.xlsx"'})
